@@ -153,8 +153,6 @@ def _load_cutoff():
 # ── Data fetchers ───────────────────────────────────────────────────────────
 
 def _fetch_data(report_date):
-    """Fetch all non-closed vessels from LDUD01, with BL qty from VCN
-    and unloaded qty from LUEU01."""
     window_end   = datetime(report_date.year, report_date.month, report_date.day, 7, 0, 0)
     window_start = window_end - timedelta(hours=24)
     ws_str = window_start.strftime('%Y-%m-%d %H:%M:%S')
@@ -163,122 +161,226 @@ def _fetch_data(report_date):
     conn = get_db()
     cur  = get_cursor(conn)
 
-    # All non-closed vessels (Draft or Partial Close)
+    # Fetch vessels that had discharge activity in the 24h window
     cur.execute("""
-        SELECT h.id, h.vcn_id, h.vessel_name, h.operation_type,
-               h.nor_tendered, h.discharge_commenced, h.discharge_completed,
-               h.doc_status
-        FROM ldud_header h
-        WHERE h.doc_status != 'Closed'
-        ORDER BY h.discharge_commenced ASC NULLS LAST
-    """)
-    vessels = [dict(r) for r in cur.fetchall()]
+SELECT DISTINCT
 
-    ldud_ids = [v['id']     for v in vessels]
+    h.id,
+    h.vcn_id,
+    h.vessel_name,
+    h.operation_type,
+    h.nor_tendered,
+
+    first_anchor.discharge_started AS discharge_commenced,
+
+    last_anchor.discharge_commenced AS discharge_completed,
+
+    CASE
+        WHEN last_anchor.discharge_commenced IS NULL THEN 1
+        ELSE 0
+    END AS sort_order,
+
+    h.doc_status
+
+FROM ldud_header h
+
+LEFT JOIN LATERAL (
+    SELECT
+        MIN(a1.discharge_started) AS discharge_started
+    FROM ldud_anchorage a1
+    WHERE a1.ldud_id = h.id
+      AND a1.discharge_started IS NOT NULL
+) first_anchor ON TRUE
+
+LEFT JOIN LATERAL (
+    SELECT
+        MAX(a2.discharge_commenced) AS discharge_commenced
+    FROM ldud_anchorage a2
+    WHERE a2.ldud_id = h.id
+      AND a2.discharge_commenced IS NOT NULL
+) last_anchor ON TRUE
+
+WHERE
+
+    first_anchor.discharge_started IS NOT NULL
+
+    AND
+
+    DATE(first_anchor.discharge_started) <= %s
+
+    AND
+
+    (
+        last_anchor.discharge_commenced IS NULL
+
+        OR
+
+        DATE(last_anchor.discharge_commenced) >= %s
+    )
+
+ORDER BY
+    sort_order,
+    first_anchor.discharge_started,
+    h.id
+
+""", (
+    report_date,
+    report_date
+))
+    vessels  = [dict(r) for r in cur.fetchall()]
+    ldud_ids = [v['id'] for v in vessels]
     vcn_ids  = [v['vcn_id'] for v in vessels if v.get('vcn_id')]
 
-    # BL quantities from VCN (both import and export)
-    bl_import  = {}
-    bl_export  = {}
-    vcn_meta   = {}
+    bl_import, bl_export, vcn_meta = {}, {}, {}
+
     if vcn_ids:
         cur.execute("""
             SELECT vcn_id, COALESCE(SUM(bl_quantity), 0) AS total
-            FROM vcn_cargo_declaration WHERE vcn_id = ANY(%s) GROUP BY vcn_id
+            FROM vcn_cargo_declaration
+            WHERE vcn_id = ANY(%s) GROUP BY vcn_id
         """, (vcn_ids,))
         for r in cur.fetchall():
             bl_import[r['vcn_id']] = float(r['total'])
 
         cur.execute("""
             SELECT vcn_id, COALESCE(SUM(bl_quantity), 0) AS total
-            FROM vcn_export_cargo_declaration WHERE vcn_id = ANY(%s) GROUP BY vcn_id
+            FROM vcn_export_cargo_declaration
+            WHERE vcn_id = ANY(%s) GROUP BY vcn_id
         """, (vcn_ids,))
         for r in cur.fetchall():
             bl_export[r['vcn_id']] = float(r['total'])
 
         cur.execute("""
-            SELECT id, importer_exporter_name FROM vcn_header WHERE id = ANY(%s)
+            SELECT id, importer_exporter_name
+            FROM vcn_header WHERE id = ANY(%s)
         """, (vcn_ids,))
         vcn_meta = {r['id']: r['importer_exporter_name'] or '' for r in cur.fetchall()}
 
-    # Unloaded quantities from LUEU01 — total per source vessel
+    # ops_till — total discharged from lueu_lines up to selected date
     lueu_total = {}
-    lueu_24h   = {}
-    if ldud_ids:
-        # Total unloaded till report date 7AM
+    if vcn_ids:
         cur.execute("""
             SELECT source_id, COALESCE(SUM(quantity), 0) AS qty
             FROM lueu_lines
-            WHERE source_type = 'LDUD'
+            WHERE source_type = 'VCN'
               AND source_id = ANY(%s)
-              AND entry_date IS NOT NULL
-              AND (entry_date || ' ' || COALESCE(from_time, '00:00')) < %s
+              AND entry_date::date < %s::date
             GROUP BY source_id
-        """, (ldud_ids, we_str))
+        """, (vcn_ids, we_str))
         for r in cur.fetchall():
             lueu_total[r['source_id']] = float(r['qty'])
 
-        # 24h unloaded
-        cur.execute("""
-            SELECT source_id, COALESCE(SUM(quantity), 0) AS qty
-            FROM lueu_lines
-            WHERE source_type = 'LDUD'
-              AND source_id = ANY(%s)
-              AND entry_date IS NOT NULL
-              AND (entry_date || ' ' || COALESCE(from_time, '00:00')) >= %s
-              AND (entry_date || ' ' || COALESCE(from_time, '00:00')) < %s
-            GROUP BY source_id
-        """, (ldud_ids, ws_str, we_str))
-        for r in cur.fetchall():
-            lueu_24h[r['source_id']] = float(r['qty'])
+    # ops_24h — discharged in the 24h window
+   # 24 Hr Discharge (Till Previous Day)
 
-    # Barge status snapshot
-    barge_stats = {}
+    ops_24h = {}
+
+    prev_date = report_date - timedelta(days=1)
+
     if ldud_ids:
-        _STATUS_KEYS = (
-            'at_jetty', 'waiting_discharge', 'waiting_empty_jetty',
-            'at_gull_loaded', 'under_loading', 'waiting_loading', 'in_transit_jetty_to_mv',
-        )
         cur.execute("""
-            SELECT ldud_id, barge_name, discharge_quantity,
-                   along_side_vessel, commenced_loading, completed_loading,
-                   cast_off_mv, anchored_gull_island, aweigh_gull_island,
-                   amf_at_port, along_side_berth, commence_discharge_berth,
-                   completed_discharge_berth, cast_off_berth, cast_off_port
-            FROM ldud_barge_lines
+            SELECT
+                ldud_id,
+                COALESCE(SUM(quantity), 0) AS qty
+            FROM ldud_vessel_operations
             WHERE ldud_id = ANY(%s)
-              AND along_side_vessel < %s
-              AND (cast_off_port IS NULL OR cast_off_port > %s)
-        """, (ldud_ids, we_str, ws_str))
+            AND TO_DATE(start_time, 'YYYY-MM-DD') = %s
+            GROUP BY ldud_id
+        """, (ldud_ids, prev_date))
+
+        for r in cur.fetchall():
+            ops_24h[r['ldud_id']] = float(r['qty'])
+
+
+    #LOADED TILL DATE (TILL PREVIOUS DAY)
+
+    ops_till = {}
+
+    cutoff_date = report_date - timedelta(days=1)
+
+    if ldud_ids:
+        cur.execute("""
+            SELECT
+                ldud_id,
+                COALESCE(SUM(quantity), 0) AS qty
+            FROM ldud_vessel_operations
+            WHERE ldud_id = ANY(%s)
+            AND TO_DATE(start_time, 'YYYY-MM-DD') <= %s
+            GROUP BY ldud_id
+        """, (ldud_ids, cutoff_date))
+
+        for r in cur.fetchall():
+            ops_till[r['ldud_id']] = float(r['qty'])
+
+    # Barges
+    barge_stats = {}
+    _STATUS_KEYS = (
+        'at_jetty', 'waiting_discharge', 'waiting_empty_jetty',
+        'at_gull_loaded', 'under_loading', 'waiting_loading',
+        'in_transit_jetty_to_mv',
+    )
+    if ldud_ids:
+        cur.execute("""
+    SELECT
+        ldud_id,
+        barge_name,
+        discharge_quantity,
+        port_crane,
+        along_side_vessel,
+        commenced_loading,
+        completed_loading,
+        cast_off_mv,
+        anchored_gull_island,
+        aweigh_gull_island,
+        amf_at_port,
+        along_side_berth,
+        commence_discharge_berth,
+        completed_discharge_berth,
+        cast_off_berth,
+        cast_off_port
+    FROM ldud_barge_lines
+    WHERE ldud_id = ANY(%s)
+      AND (cast_off_port IS NULL OR cast_off_port > %s)
+""", (ldud_ids, ws_str))
         for r in cur.fetchall():
             lid = r['ldud_id']
             bn  = (r['barge_name'] or '').strip()
-            qty = r['discharge_quantity']
+            qty = r['discharge_quantity'] or 0
+
             if lid not in barge_stats:
                 barge_stats[lid] = {'all': set(), **{k: [] for k in _STATUS_KEYS}}
+
             if bn:
                 barge_stats[lid]['all'].add(bn)
-            if r['cast_off_port']:
-                status = 'in_transit_jetty_to_mv'
+
+            if   r['cast_off_port']:
+                status = 'Non-Operational'
             elif r['completed_discharge_berth'] and not r['cast_off_berth']:
                 status = 'waiting_empty_jetty'
-            elif r['along_side_berth'] and not r['commence_discharge_berth']:
-                status = 'waiting_discharge'
-            elif r['amf_at_port'] and not r['along_side_berth']:
+            elif r['commence_discharge_berth'] and not r['cast_off_berth']:
                 status = 'at_jetty'
-            elif r['anchored_gull_island'] and not r['aweigh_gull_island']:
+            elif r['cast_off_mv'] and not r['along_side_berth']:
                 status = 'at_gull_loaded'
-            elif r['commenced_loading'] and not r['completed_loading']:
+            elif (r['commence_discharge_berth']and not r['completed_discharge_berth']):
                 status = 'under_loading'
             elif r['along_side_vessel'] and not r['commenced_loading']:
                 status = 'waiting_loading'
             else:
                 status = None
+
             if status and bn:
-                if status in ('at_jetty', 'waiting_discharge') and qty:
-                    entry = f'{bn} ({int(round(qty))} MT)'
+
+                crane = (r['port_crane'] or '').strip()
+
+                if status == 'at_jetty':
+                    entry = f"{bn} - {crane} ({int(round(qty))} MT)"
+
+                elif status == 'waiting_discharge' and qty:
+                    entry = f"{bn} ({int(round(qty))} MT)"
+
                 else:
                     entry = bn
+
                 barge_stats[lid][status].append(entry)
 
     conn.close()
@@ -287,17 +389,19 @@ def _fetch_data(report_date):
         return ', '.join(bs_dict.get(key, []))
 
     for v in vessels:
-        lid        = v['id']
-        vid        = v.get('vcn_id')
-        op         = v.get('operation_type', '')
-        bl_qty     = (bl_export.get(vid, 0) if op == 'Export' else bl_import.get(vid, 0)) if vid else 0
-        unloaded   = lueu_total.get(lid, 0)
-        bs         = barge_stats.get(lid, {})
+        lid    = v['id']
+        vid    = v.get('vcn_id')
+        op     = v.get('operation_type', '')
+        bl_qty = (bl_export.get(vid, 0) if op == 'Export' else bl_import.get(vid, 0)) if vid else 0
+        actual = lueu_total.get(vid, 0)
+        bs     = barge_stats.get(lid, {})
+
         v['stevedore_group']        = vcn_meta.get(vid, '') if vid else ''
         v['bl_qty']                 = bl_qty
-        v['ops_24h']                = lueu_24h.get(lid, 0)
-        v['ops_till']               = unloaded
-        v['balance']                = bl_qty - unloaded
+        v['ops_24h']                = ops_24h.get(lid, 0)
+        v['ops_till']               = ops_till.get(lid, 0)
+        v['balance']                = round(bl_qty - ops_till.get(lid, 0),2
+    )
         v['num_barges']             = len(bs.get('all', set())) or ''
         v['at_jetty']               = _make_names(bs, 'at_jetty')
         v['waiting_discharge']      = _make_names(bs, 'waiting_discharge')
@@ -309,7 +413,33 @@ def _fetch_data(report_date):
 
     return vessels
 
+def _fetch_upcoming_vessels(report_date):
 
+    conn = get_db()
+    cur = get_cursor(conn)
+
+    cur.execute("""
+    SELECT
+        vh.vessel_name,
+        vh.cargo_type,
+        vh.vessel_agent_name,
+        vn.eta,
+        lh.nor_tendered
+    FROM vcn_header vh
+    JOIN vcn_nominations vn
+        ON vn.vcn_id = vh.id
+    LEFT JOIN ldud_header lh
+        ON lh.vcn_id = vh.id
+    WHERE DATE(COALESCE(lh.nor_tendered, vn.eta)) > %s
+    ORDER BY vn.eta
+""", (report_date,))
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return rows
+        
 def _fetch_cargo_handled(report_date):
     """Fetch cargo handled by route (day + month).
     Month values incorporate cutoff if the cutoff date falls within the report month.
@@ -490,7 +620,23 @@ def _build_excel(vessels, report_date,
     mbc_day    = mbc_day   or _empty_mbc()
     mbc_month  = mbc_month or _empty_mbc()
 
-    col_widths = {1: 30, 2: 35, 3: 35, 4: 35, 5: 35, 6: 35, 7: 10, 8: 32, 9: 22}
+        # Dynamic column calculation
+    vessel_end_col = 1 + len(vessels)
+    doc_col = vessel_end_col + 1
+    issue_col = vessel_end_col + 2
+
+    # Dynamic widths
+    col_widths = {1: 30}
+
+    # Vessel columns
+    for i in range(len(vessels)):
+        col_widths[2 + i] = 35
+
+    # Extra columns
+    col_widths[doc_col] = 32
+    col_widths[issue_col] = 22
+
+    # Apply widths
     for ci, w in col_widths.items():
         ws.column_dimensions[get_column_letter(ci)].width = w
 
@@ -546,22 +692,41 @@ def _build_excel(vessels, report_date,
     title_str = f'Daily Report of JSW Dharamtar Port Operation : {date_str}'
 
     # Row 1
+    # Row 1
     ws.row_dimensions[1].height = 20
+
+    vessel_end_col = 1 + len(vessels)
+    doc_col = vessel_end_col + 1
+    issue_col = vessel_end_col + 2
+
     _cell(1, 1, report_date.strftime('%d-%m-%Y'), align=_left)
-    _merge_row(1, 2, 7, title_str, align=_ctr)
-    _cell(1, 8, 'Doc No. | REV.02 | Issue no. 02', align=_left)
-    _cell(1, 9, f'Issue Date: {report_date.strftime("%d-%m-%Y")}', align=_left)
+
+    _merge_row(1, 2, vessel_end_col, title_str, align=_ctr)
+
+    _cell(doc_col, 1)
+    _cell(1, doc_col, 'Doc No. | REV.02 | Issue no. 02', align=_left)
+
+    _cell(issue_col, 1)
+    _cell(1, issue_col, f'Issue Date: {report_date.strftime("%d-%m-%Y")}', align=_left)
 
     # Row 2: vessel name headers
+# Row 2: vessel name headers
     ws.row_dimensions[2].height = 20
+
     _cell(2, 1, '')
+
     for i, v in enumerate(vessels):
-        _cell(2, 2 + i, f'Vessel {i + 1}: {v["vessel_name"]}', bold=True, align=_ctr)
-    for i in range(len(vessels), 5):
-        _cell(2, 2 + i, '')
-    _cell(2, 7, '')
-    _cell(2, 8, '')
-    _cell(2, 9, '')
+        _cell(
+            2,
+            2 + i,
+            f'Vessel {i + 1}: {v["vessel_name"]}',
+            bold=True,
+            align=_ctr
+        )
+
+    # Empty cells after vessels
+    _cell(2, doc_col, '')
+    _cell(2, issue_col, '')
 
     label_discharge = 'Unloaded till Date (LUEU)'
     label_balance   = 'Balance'
@@ -605,11 +770,8 @@ def _build_excel(vessels, report_date,
             raw = v.get(field)
             val = formatter(raw) if (formatter and raw is not None) else (raw or '')
             _cell(r, 2 + i, val, align=align)
-        for i in range(len(vessels), 5):
-            _cell(r, 2 + i, '')
-        _cell(r, 7, '')
-        _cell(r, 8, '')
-        _cell(r, 9, '')
+            _cell(r, doc_col, '')
+            _cell(r, issue_col, '')
 
     # ── Cargo Handled section ────────────────────────────────────────────────
     cargo_start = 3 + len(ROWS)
@@ -743,6 +905,120 @@ def _build_excel(vessels, report_date,
     buf.seek(0)
     return buf
 
+
+@bp.route('/api/module/RP01/daily-ops/preview')
+@login_required
+def daily_ops_preview():
+
+    date_str = request.args.get(
+        'report_date',
+        date.today().strftime('%Y-%m-%d')
+    )
+
+    try:
+        report_date = datetime.strptime(
+            date_str,
+            '%Y-%m-%d'
+        ).date()
+    except ValueError:
+        return Response('Invalid date', status=400)
+
+    vessels = _fetch_data(report_date)
+
+    html = """
+    <table style='width:100%;border-collapse:collapse;font-family:Arial'>
+        <tr style='background:#4a90d9;color:white'>
+            <th style='border:1px solid #ccc;padding:8px'>Parameter</th>
+    """
+
+    for i, v in enumerate(vessels):
+        html += f"""
+            <th style='border:1px solid #ccc;padding:8px'>
+                Vessel {i+1}<br>{v['vessel_name']}
+            </th>
+        """
+
+    html += "</tr>"
+
+    rows = [
+    ("Stevedore Group", "stevedore_group"),
+    ("BL Qty", "bl_qty"),
+    ("24 Hrs Discharge", "ops_24h"),
+    ("Unloaded Till Date", "ops_till"),
+    ("Balance", "balance"),
+    ("Vsl Arrived/NOR", "nor_tendered"),
+    ("Disch Commenced", "discharge_commenced"),
+    ("Disch Completed", "discharge_completed"),
+    ("No Of Barges", "num_barges"),
+    ("At Jetty", "at_jetty"),
+    ("Waiting Discharge", "waiting_discharge"),
+    ("Waiting Empty At Jetty", "waiting_empty_jetty"),
+    ("At Gull-waiting(Loaded)", "at_gull_loaded"),
+    ("Under Loading", "under_loading"),
+    ("Waiting Loading", "waiting_loading"),
+    ("In Transit Jetty To MV", "in_transit_jetty_to_mv")
+    ]
+
+    for label, field in rows:
+
+        html += f"""
+        <tr>
+            <td style='border:1px solid #ccc;padding:8px;font-weight:bold'>
+                {label}
+            </td>
+        """
+
+        for v in vessels:
+
+            value = v.get(field, '')
+
+            if field in (
+                'nor_tendered',
+                'discharge_commenced',
+                'discharge_completed'
+            ):
+                value = _fmt_dt(value)
+
+            html += f"""
+            <td style='border:1px solid #ccc;padding:8px'>
+                {value}
+            </td>
+            """
+
+        html += "</tr>"
+
+    html += "</table>"
+
+    upcoming_vessels = _fetch_upcoming_vessels(report_date)
+
+    html += """
+    <br><br>
+    <h3>Upcoming Vessels</h3>
+    <p>
+
+
+    <table style='width:100%;border-collapse:collapse;font-family:Arial'>
+        <tr style='background:#4a90d9;color:white'>
+            <th style='border:1px solid #ccc;padding:8px'>Vessel Name</th>
+            <th style='border:1px solid #ccc;padding:8px'>Cargo Type</th>
+            <th style='border:1px solid #ccc;padding:8px'>Vessel Agent</th>
+            <th style='border:1px solid #ccc;padding:8px'>ETA</th>
+        </tr>
+    """
+
+    for v in upcoming_vessels:
+        html += f"""
+        <tr>
+            <td style='border:1px solid #ccc;padding:8px'>{v['vessel_name']}</td>
+            <td style='border:1px solid #ccc;padding:8px'>{v['cargo_type']}</td>
+            <td style='border:1px solid #ccc;padding:8px'>{v['vessel_agent_name']}</td>
+            <td style='border:1px solid #ccc;padding:8px'>{_fmt_dt(v['eta'])}</td>
+        </tr>
+        """
+
+    html += "</table>"
+
+    return html
 
 # ── Download endpoint ───────────────────────────────────────────────────────
 

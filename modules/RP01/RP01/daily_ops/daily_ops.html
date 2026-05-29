@@ -218,6 +218,9 @@
         <label for="report-date">Report Date</label>
         <input type="date" id="report-date">
     </div>
+    <button type="button" class="filter-btn primary" id="preview-btn" onclick="previewReport()">
+    👁 Preview
+    </button>
     <button type="button" class="filter-btn primary" id="dl-btn" onclick="downloadReport()">&#8595; Download Excel</button>
     <button type="button" class="filter-btn secondary" onclick="openCutoffModal()">Cutoff Settings</button>
 </div>
@@ -228,6 +231,11 @@
     24-hour window: 07:00 of the previous day to 07:00 of the selected date.
     Only vessels with NOR tendered are included.
 </p>
+
+<!-- Preview Section -->
+<div id="preview-container" style="display:none; margin-top:20px;">
+    <div id="preview-content"></div>
+</div>
 
 <!-- ── Cutoff Settings Modal ──────────────────────────────────────────── -->
 <div class="modal-overlay" id="cutoff-modal">
@@ -326,6 +334,33 @@ function downloadReport() {
         .finally(() => {
             btn.disabled    = false;
             btn.textContent = '\u2193 Download Excel';
+        });
+}
+
+function previewReport() {
+
+    const reportDate =
+        document.getElementById('report-date').value;
+
+    if (!reportDate) {
+        alert('Please select report date');
+        return;
+    }
+
+    fetch(`/api/module/RP01/daily-ops/preview?report_date=${reportDate}`)
+        .then(r => r.text())
+        .then(html => {
+
+            document.getElementById(
+                'preview-content'
+            ).innerHTML = html;
+
+            document.getElementById(
+                'preview-container'
+            ).style.display = 'block';
+        })
+        .catch(err => {
+            alert(err);
         });
 }
 
