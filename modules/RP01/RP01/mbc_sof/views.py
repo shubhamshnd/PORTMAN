@@ -493,7 +493,7 @@ def mbc_sof_print(mbc_id):
     uom                 = header.get('quantity_uom', 'MT')
     # Port display:
     # IMPORT  -> hard-coded Discharge Port
-    # EXPORT  -> no Discharge Port value
+    # EXPORT  -> keep Discharge Port blank
     load_port_name = header.get('load_port', '') or ''
 
     if op_type == 'export':
