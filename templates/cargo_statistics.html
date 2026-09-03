@@ -1331,9 +1331,9 @@
                 <tr>
                     <th class="unit-head">(MT)</th>
                     <th class="unit-head">(MT)</th>
-                    <th class="unit-head">(MT)</th>
-                    <th class="unit-head">(MT)</th>
-                    <th class="unit-head">(MT)</th>
+                    <th class="unit-head">(Lacs MT)</th>
+                    <th class="unit-head">(Lacs MT)</th>
+                    <th class="unit-head">(Lacs MT)</th>
                     <th class="unit-head">(MT)</th>
                     <th class="unit-head">(MT)</th>
                     <th class="unit-head">(MT)</th>
@@ -1660,9 +1660,9 @@
     // RP01 supplies targets / stock / report metadata.
     const API_URL = '/api/module/RP01/cargo_statistics/data';
 
-    // Consumption is fetched directly from stats_cargo through the
-    // CARGO_STATS Consumption API.  This keeps Day / MTD / YTD tied to
-    // the actual Consumption records for the selected date/month/year.
+    // Separate Consumption table only.
+    // This API must NOT overwrite Actual Cargo Handled in the main
+    // Cargo Statistics / Port Overview table.
     const CONSUMPTION_API_URL = '/module/CARGO_STATS/api/consumption';
     const PRODUCTION_API_URL = '/api/production';
 
@@ -1998,8 +1998,13 @@
     }
 
     function getFinancialYearStart(selectedDate) {
-        const d = parseLocalDate(selectedDate);
-        if (!d) return null;
+        // Accept either an ISO date string (YYYY-MM-DD) or an existing Date.
+        // This prevents fyStart from becoming null when a Date object is passed.
+        const d = selectedDate instanceof Date
+            ? new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())
+            : parseLocalDate(selectedDate);
+
+        if (!d || !Number.isFinite(d.getTime())) return null;
 
         const fyYear = d.getMonth() >= 3
             ? d.getFullYear()
@@ -2081,97 +2086,7 @@
         return totals;
     }
 
-    function applyStatsCargoConsumption(data, consumptionRows, selectedDate) {
-        const rows = Array.isArray(data.rows) ? data.rows : [];
-        const actuals = buildConsumptionActuals(
-            consumptionRows,
-            selectedDate
-        );
 
-        const labelMap = {
-            'IBRM': 'IBRM',
-            'CBRM': 'CBRM',
-            'Fluxes': 'Fluxes',
-            'Clinker/ Slag': 'Clinker/ Slag',
-            'FG Goods': 'FG Goods'
-        };
-
-        // Keep the existing RP01 targets, but replace all Consumption
-        // actuals with values calculated from stats_cargo.
-        rows.forEach(row => {
-            const label = labelMap[row.cargo];
-            if (!label || !actuals[label]) return;
-
-            row.actual_day = actuals[label].day;
-            row.actual_mtd = actuals[label].mtd;
-            row.actual_ytd = actuals[label].ytd;
-
-            // Recalculate GAP and Asking Rate using the new MTD actual.
-            row.gap_abp = Math.max(
-                Number(row.abp || 0) - row.actual_mtd,
-                0
-            );
-
-            row.gap_scm = Math.max(
-                Number(row.scm || 0) - row.actual_mtd,
-                0
-            );
-
-            const balanceDays = Number(data.balance_days || 0);
-
-            row.asking_abp = balanceDays > 0
-                ? row.gap_abp / balanceDays
-                : 0;
-
-            row.asking_scm = balanceDays > 0
-                ? row.gap_scm / balanceDays
-                : 0;
-        });
-
-        // Rebuild the TOTAL row from the updated Consumption values.
-        const totalRow = rows.find(row => row.key === 'TOTAL');
-
-        if (totalRow) {
-            const detailRows = rows.filter(row => row.key !== 'TOTAL');
-
-            totalRow.actual_day = detailRows.reduce(
-                (sum, row) => sum + Number(row.actual_day || 0),
-                0
-            );
-
-            totalRow.actual_mtd = detailRows.reduce(
-                (sum, row) => sum + Number(row.actual_mtd || 0),
-                0
-            );
-
-            totalRow.actual_ytd = detailRows.reduce(
-                (sum, row) => sum + Number(row.actual_ytd || 0),
-                0
-            );
-
-            totalRow.gap_abp = detailRows.reduce(
-                (sum, row) => sum + Number(row.gap_abp || 0),
-                0
-            );
-
-            totalRow.gap_scm = detailRows.reduce(
-                (sum, row) => sum + Number(row.gap_scm || 0),
-                0
-            );
-
-            totalRow.asking_abp = detailRows.reduce(
-                (sum, row) => sum + Number(row.asking_abp || 0),
-                0
-            );
-
-            totalRow.asking_scm = detailRows.reduce(
-                (sum, row) => sum + Number(row.asking_scm || 0),
-                0
-            );
-        }
-
-        return data;
-    }
 
 
     const PRODUCTION_UNITS = [
@@ -2266,7 +2181,33 @@
         ]);
     }
 
+    // Hardcoded Target Production (TPD) values.
+    // Only the Target column is hardcoded. Actual / MTD / AVG / YTD remain dynamic.
+    const HARDCODED_PRODUCTION_TARGETS = {
+        'BF-1': 10234,
+        'BF-2': 13300,
+        'PP-1': 11904,
+        'PP-2': 20187,
+        'SP-1': 7200,
+        'SP-2': 8200,
+        'CO-1 (PUSHINGS)': 94,
+        'CO-2 (A&B) (PUSHINGS)': 218,
+        'CO-2 (C&D) (PUSHINGS)': 218
+    };
+
     function productionTarget(row) {
+        const unit = productionUnitName(row);
+        const matchedUnit = PRODUCTION_UNITS.find(
+            item => productionUnitMatches({ unit }, item)
+        );
+
+        if (matchedUnit && Object.prototype.hasOwnProperty.call(
+            HARDCODED_PRODUCTION_TARGETS,
+            matchedUnit
+        )) {
+            return HARDCODED_PRODUCTION_TARGETS[matchedUnit];
+        }
+
         return productionNumber(row, [
             'target_production',
             'target',
@@ -2384,15 +2325,24 @@
         });
 
         const monthDays = selected.getDate();
-        const fyDays = Math.floor((selected - fyStart) / (24 * 60 * 60 * 1000)) + 1;
+
+        const fyDays = fyStart
+            ? calendarDayCount(fyStart, selected)
+            : 0;
 
         PRODUCTION_UNITS.forEach(unit => {
             const item = result[unit];
             item.day = Number(item.day.toFixed(2));
             item.mtd = Number(item.mtd.toFixed(2));
             item.ytd = Number(item.ytd.toFixed(2));
-            item.avg_mtd = monthDays > 0 ? Number((item.mtd / monthDays).toFixed(2)) : 0;
-            item.avg_ytd = fyDays > 0 ? Number((item.ytd / fyDays).toFixed(2)) : 0;
+            item.avg_mtd =
+                monthDays > 0
+                    ? Number((item.mtd / monthDays).toFixed(2))
+                    : 0;
+            item.avg_ytd =
+                fyDays > 0
+                    ? Number((item.ytd / fyDays).toFixed(2))
+                    : 0;
         });
 
         return result;
@@ -2405,17 +2355,30 @@
 
         let html = '';
 
-        PRODUCTION_UNITS.forEach(unit => {
+        PRODUCTION_UNITS.forEach((unit, index) => {
             const item = data[unit];
+
+            // Keep the same merge as the reference:
+            // CO-2 (A&B) and CO-2 (C&D) share one Target Production cell.
+            const isCo2Ab = unit === 'CO-2 (A&B) (PUSHINGS)';
+            const isCo2Cd = unit === 'CO-2 (C&D) (PUSHINGS)';
 
             html += `
                 <tr>
                     <td class="production-unit">
                         ${escapeHtml(unit)}
                     </td>
-                    <td class="production-number production-target">
-                        ${formatNumber(item.target)}
-                    </td>
+                    ${
+                        isCo2Ab
+                            ? `<td class="production-number production-target" rowspan="2" style="vertical-align: middle;">
+                                   ${formatNumber(item.target)}
+                               </td>`
+                            : isCo2Cd
+                                ? ''
+                                : `<td class="production-number production-target">
+                                       ${formatNumber(item.target)}
+                                   </td>`
+                    }
                     <td class="production-number production-actual">
                         ${formatNumber(item.day)}
                     </td>
@@ -3608,14 +3571,15 @@
                 throw new Error('Production API returned no valid rows.');
             }
 
-            // Replace RP01's Consumption actuals with direct stats_cargo
-            // Consumption values for the selected day, month and FY.
-            data = applyStatsCargoConsumption(
-                data,
-                consumptionData,
-                reportDate
-            );
-
+            // IMPORTANT:
+            // Do NOT replace the main Cargo Statistics Actual Day / MTD / YTD
+            // values with stats_cargo Consumption values.
+            //
+            // The main Cargo Statistics table must use the values supplied
+            // by the RP01 Port Overview API.
+            //
+            // stats_cargo Consumption is used ONLY for the separate
+            // Consumption table.
             renderConsumptionTable(
                 consumptionData,
                 reportDate
@@ -3629,7 +3593,12 @@
                 reportDate
             );
 
-            await loadDailyOperations(selectedDate);
+            // Daily Port Operations and its chart must stop at reportDate
+            // (yesterday), never include the selected/current date.
+            await loadDailyOperations(reportDate);
+
+            // Chart must also exclude the Selected Date.
+            await loadDischargeChart(reportDate);
 
             await loadPnpReceipt(selectedDate);
             await loadAdditionalReceiptTables(selectedDate);

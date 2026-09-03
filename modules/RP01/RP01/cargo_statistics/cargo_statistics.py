@@ -11,6 +11,8 @@ from ..daily_ops.model import fy_label
 from ..port_overview.views import (
     login_required,
     _days_left_in_month,
+    _cargo_by_type,
+    _current_fy_by_type,
     _load_fy_targets,
 )
 
@@ -494,34 +496,36 @@ def _build_report(selected_date):
 
     financial_year = fy_label(fy_start_year)
 
-    # Consumption must come from stats_cargo.
+    # ========================================================================
+    # ACTUAL CARGO HANDLED
+    # ========================================================================
+    # Use EXACTLY the same calculations as Port Overview.
     #
-    # For the selected report date:
-    #   For the Day = consumption record for that day
-    #   MTD        = sum of consumption records from month start to report date
-    #   YTD        = sum of consumption records from FY start (1-Apr) to report date
+    # If today is 03-Sep-2026 and the report is generated for that date:
     #
-    # This works for any selected year/month because the date range is built
-    # from the selected report date.
-    day_by_type = _stats_cargo_consumption(
-        report_date,
-        report_date,
+    #   Actual Day = Port Overview "Yesterday" = 02-Sep-2026
+    #   Actual MTD = Port Overview "Sep 2026" through 02-Sep-2026
+    #   Actual YTD = Port Overview "FY 2026-2027" through 02-Sep-2026
+    #
+    # Do NOT read Actual Cargo Handled from stats_cargo consumption.
+    # Port Overview is the single source for these actuals.
+    #
+    # _cargo_by_type() gives the same daily/monthly live cargo values used by
+    # the Port Overview cards.
+    day_by_type = _cargo_by_type(
+        report_date_s,
+        report_date_s,
     )
 
-    mtd_by_type = _stats_cargo_consumption(
-        month_start,
-        report_date,
+    mtd_by_type = _cargo_by_type(
+        month_start_s,
+        report_date_s,
     )
 
-    fy_start_date = datetime(
-        fy_start_year,
-        4,
-        1,
-    ).date()
-
-    ytd_by_type = _stats_cargo_consumption(
-        fy_start_date,
-        report_date,
+    # This is the SAME FY calculation used by the Port Overview FY card:
+    # historical April + live May onward.
+    ytd_by_type = _current_fy_by_type(
+        report_date_s,
     )
 
     # IMPORTANT:
