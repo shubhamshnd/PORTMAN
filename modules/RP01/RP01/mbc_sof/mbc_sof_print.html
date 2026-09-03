@@ -312,10 +312,12 @@
             <td class="vi-label">Load Port</td>
             <td class="vi-value" colspan="3">{{ load_port_name or '—' }}</td>
         </tr>
+        {% if op_type|lower != 'export' %}
         <tr>
             <td class="vi-label">Discharge Port</td>
-            <td class="vi-value" colspan="3">{{ discharge_port_name or '—' }}</td>
+            <td class="vi-value" colspan="3">JSW DHARAMTAR PORT</td>
         </tr>
+        {% endif %}
     </table>
 
     <!-- ── Activity Details ── -->
