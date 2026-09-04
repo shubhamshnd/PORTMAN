@@ -8,16 +8,23 @@
 
 <div style="padding:14px;">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-        <select id="rev-month" style="padding:5px 8px;border-radius:4px;border:1px solid #cbd5e0;">
-            <option value="">All Months</option>
-            <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
-            <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
-            <option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option>
-            <option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
-        </select>
+        <label style="font-size:13px;color:#4a5568;font-weight:600;">
+            From Date
+        </label>
+        <input id="rev-from-date" type="date"
+               style="padding:5px 8px;border-radius:4px;border:1px solid #cbd5e0;">
 
-        <input id="rev-year" type="number" placeholder="Year (e.g. 2026)"
-               style="padding:5px 8px;border-radius:4px;border:1px solid #cbd5e0;width:130px;">
+        <label style="font-size:13px;color:#4a5568;font-weight:600;margin-left:4px;">
+            To Date
+        </label>
+        <input id="rev-to-date" type="date"
+               style="padding:5px 8px;border-radius:4px;border:1px solid #cbd5e0;">
+
+        <button type="button" onclick="revClearDates()"
+                style="background:#edf2f7;color:#2d3748;border:1px solid #cbd5e0;
+                       padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;">
+            Clear Dates
+        </button>
 
         <button class="btn" onclick="revReload()"
                 style="background:#3182ce;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;">
@@ -310,16 +317,48 @@ function revInit() {
 }
 
 function revReload() {
-    const month = document.getElementById('rev-month').value;
-    const year = document.getElementById('rev-year').value;
+    const fromDate = document.getElementById('rev-from-date').value;
+    const toDate = document.getElementById('rev-to-date').value;
+
+    // Do not allow an invalid date range.
+    if (fromDate && toDate && fromDate > toDate) {
+        alert('From Date cannot be later than To Date.');
+        return;
+    }
 
     const qs = new URLSearchParams();
 
-    if (month) qs.set('month', month);
-    if (year) qs.set('year', year);
+    if (fromDate) qs.set('from_date', fromDate);
+    if (toDate) qs.set('to_date', toDate);
+
+    document.getElementById('rev-status').textContent = 'Loading...';
 
     revGrid.setData('/api/module/RP02/revenue/data?' + qs.toString());
 }
+
+function revClearDates() {
+    document.getElementById('rev-from-date').value = '';
+    document.getElementById('rev-to-date').value = '';
+
+    revReload();
+}
+
+// Pressing Enter in either date field applies the selected range.
+document.addEventListener('DOMContentLoaded', function() {
+    ['rev-from-date', 'rev-to-date'].forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', function() {
+                // If both dates are selected, refresh immediately.
+                const fromDate = document.getElementById('rev-from-date').value;
+                const toDate = document.getElementById('rev-to-date').value;
+                if (fromDate && toDate) {
+                    revReload();
+                }
+            });
+        }
+    });
+});
 
 function revDownload() {
     if (revGrid)

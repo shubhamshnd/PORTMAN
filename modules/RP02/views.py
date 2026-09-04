@@ -382,6 +382,12 @@ def revenue_report_data():
     if 'user_id' not in session:
         return jsonify({'error': 'Not logged in'}), 401
 
+    # Date range filters.
+    # The UI can send from_date and to_date in YYYY-MM-DD format.
+    # Both dates are inclusive. Existing month/year filtering is retained
+    # for backward compatibility when date range is not supplied.
+    from_date = request.args.get('from_date') or request.args.get('date_from')
+    to_date = request.args.get('to_date') or request.args.get('date_to')
     month = request.args.get('month')
     year = request.args.get('year')
 
@@ -391,11 +397,43 @@ def revenue_report_data():
     where = []
     params = []
 
-    if month:
+    def _valid_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return None
+
+    from_date_obj = _valid_date(from_date)
+    to_date_obj = _valid_date(to_date)
+
+    # If both dates are selected, show only records between them,
+    # including both the From Date and To Date.
+    if from_date_obj and to_date_obj:
+        if from_date_obj > to_date_obj:
+            conn.close()
+            return jsonify({
+                'error': 'From Date cannot be later than To Date'
+            }), 400
+
+        where.append("ih.invoice_date::date BETWEEN %s AND %s")
+        params.extend([from_date_obj, to_date_obj])
+
+    elif from_date_obj:
+        where.append("ih.invoice_date::date >= %s")
+        params.append(from_date_obj)
+
+    elif to_date_obj:
+        where.append("ih.invoice_date::date <= %s")
+        params.append(to_date_obj)
+
+    # Keep the old month/year filters working if no date range is supplied.
+    elif month:
         where.append("EXTRACT(MONTH FROM ih.invoice_date::date) = %s")
         params.append(int(month))
 
-    if year:
+    if not from_date_obj and not to_date_obj and year:
         where.append("EXTRACT(YEAR FROM ih.invoice_date::date) = %s")
         params.append(int(year))
 
@@ -593,9 +631,40 @@ ORDER BY ih.invoice_date::date DESC NULLS LAST, ih.id DESC
 
     # Rows invoiced before go-live live in the backdated upload, not in
     # invoice_header — the register is the two put together.
+    # Backdated rows must use the same selected date range as live rows.
+    # The existing helper is month/year based, so fetch the relevant rows
+    # first and then apply the inclusive date-range filter to the combined
+    # register. This keeps both Live and Backdated data consistent.
     out.extend(revenue.get_register_rows(month, year))
+
+    if from_date_obj or to_date_obj:
+        def _row_date(row):
+            value = row.get('date')
+            if not value:
+                return None
+            try:
+                return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                return None
+
+        filtered_out = []
+        for row in out:
+            row_date = _row_date(row)
+            if row_date is None:
+                continue
+            if from_date_obj and row_date < from_date_obj:
+                continue
+            if to_date_obj and row_date > to_date_obj:
+                continue
+            filtered_out.append(row)
+        out = filtered_out
+
     out.sort(key=lambda r: (r.get('date') or ''), reverse=True)
-    return jsonify({'data': out})
+    return jsonify({
+        'data': out,
+        'from_date': from_date,
+        'to_date': to_date
+    })
 
 # ── Revenue Register — backdated upload ─────────────────────────────────────
 
