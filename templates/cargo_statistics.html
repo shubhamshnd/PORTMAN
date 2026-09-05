@@ -398,6 +398,13 @@
             font-size: 13px;
         }
 
+        .consumption-table .consumption-cargo-head {
+            vertical-align: middle !important;
+            text-align: center !important;
+            font-weight: 400 !important;
+            height: 74px !important;
+        }
+
         .consumption-table .consumption-unit {
             height: 32px;
             font-size: 13px;
@@ -1497,14 +1504,13 @@
                 </tr>
 
                 <tr>
-                    <th></th>
+                    <th rowspan="2" class="consumption-subhead consumption-cargo-head">Cargo</th>
                     <th class="consumption-subhead">For the Day</th>
                     <th class="consumption-subhead">MTD</th>
                     <th class="consumption-subhead">YTD</th>
                 </tr>
 
                 <tr>
-                    <th></th>
                     <th class="consumption-unit">(MT)</th>
                     <th class="consumption-unit">(MT)</th>
                     <th class="consumption-unit">(MT)</th>
@@ -1776,6 +1782,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 (function () {
     'use strict';
@@ -2611,6 +2618,19 @@
                '';
     }
 
+
+    function receiptGroupRowSpan(items, index) {
+        const group = items[index]?.group;
+        if (!group) return 1;
+
+        let span = 1;
+        for (let i = index + 1; i < items.length; i++) {
+            if (items[i].group !== group) break;
+            span++;
+        }
+        return span;
+    }
+
     function renderPnpReceiptTable(rows, selectedDate) {
         const body = document.getElementById('pnpReceiptBody');
         if (!body) return;
@@ -2715,11 +2735,17 @@
                 index === 0 ||
                 values[index - 1].group !== item.group;
 
+            const groupSpan = showGroup
+                ? receiptGroupRowSpan(values, index)
+                : 0;
+
             html += `
                 <tr>
-                    <td class="pnp-source-group">
-                        ${showGroup ? escapeHtml(item.group) : ''}
+                    ${showGroup ? `
+                    <td class="pnp-source-group" rowspan="${groupSpan}">
+                        ${escapeHtml(item.group)}
                     </td>
+                    ` : ''}
                     <td class="pnp-cargo">
                         ${escapeHtml(item.cargo)}
                     </td>
@@ -3264,7 +3290,7 @@
                 },
                 {
                     group: 'Through Road',
-                    cargo: "Limestone",
+                    cargo: "Limestone 40'80",
                     source: 'Rajasthan',
                     fields: ['road_limestone', 'limestone']
                 }
@@ -3361,11 +3387,17 @@
                 index === 0 ||
                 values[index - 1].group !== item.group;
 
+            const groupSpan = showGroup
+                ? receiptGroupRowSpan(values, index)
+                : 0;
+
             html += `
                 <tr>
-                    <td class="receipt-group">
-                        ${showGroup ? escapeHtml(item.group) : ''}
+                    ${showGroup ? `
+                    <td class="receipt-group" rowspan="${groupSpan}">
+                        ${escapeHtml(item.group)}
                     </td>
+                    ` : ''}
                     <td class="receipt-cargo">
                         ${escapeHtml(item.cargo)}
                     </td>
@@ -4038,6 +4070,37 @@
     // Write ONLY tbody values into the reference workbook.
     // Header/title cells are already present in the approved Excel template
     // and must never be cleared or rewritten.
+    // Convert numeric-looking table text into real Excel numbers.
+    // Commas are removed before conversion and exported numbers are shown
+    // without decimal places. Values such as "-" remain text.
+    function excelNumericValue(value) {
+        if (value === null || value === undefined) return null;
+        const s = String(value).trim();
+        if (!s || s === '-') return s || null;
+
+        const cleaned = s
+            .replace(/,/g, '')
+            .replace(/\s*(MT|TPD|Tons?)\s*$/i, '')
+            .trim();
+
+        if (/^-?\d+(?:\.\d+)?$/.test(cleaned)) {
+            const n = Number(cleaned);
+            if (Number.isFinite(n)) return Math.round(n);
+        }
+        return s;
+    }
+
+    function normalizeExcelNumberCell(cell) {
+        if (typeof cell.value === 'string') {
+            const converted = excelNumericValue(cell.value);
+            if (typeof converted === 'number') cell.value = converted;
+        }
+        if (typeof cell.value === 'number' && Number.isFinite(cell.value)) {
+            cell.value = Math.round(cell.value);
+            cell.numFmt = '#,##0';
+        }
+    }
+
     function writeHtmlTableBodyToTemplate(
         ws,
         selector,
@@ -4063,7 +4126,22 @@
                 if (!m) return false;
 
                 const iso = `${m[3]}-${m[2]}-${m[1]}`;
-                return iso <= options.maxDate;
+
+                if (!options.maxDate || iso > options.maxDate) return false;
+
+                if (options.sameMonth) {
+                    const maxParts = String(options.maxDate).split('-').map(Number);
+                    const rowParts = iso.split('-').map(Number);
+
+                    if (
+                        rowParts[0] !== maxParts[0] ||
+                        rowParts[1] !== maxParts[1]
+                    ) {
+                        return false;
+                    }
+                }
+
+                return true;
             });
         }
 
@@ -4103,7 +4181,9 @@
                 const cell = ws.getCell(startRow + r, startCol + c);
 
                 try {
-                    cell.value = value === '' ? null : value;
+                    const converted = excelNumericValue(value);
+                    cell.value = converted === '' ? null : converted;
+                    normalizeExcelNumberCell(cell);
                 } catch (e) {
                     // Leave merged/subordinate cells untouched.
                 }
@@ -4113,10 +4193,323 @@
 
     function setMergedTopLeftValue(ws, address, value) {
         try {
-            ws.getCell(address).value = value === '' ? null : value;
+            const cell = ws.getCell(address);
+            const converted = excelNumericValue(value);
+            cell.value = converted === '' ? null : converted;
+            normalizeExcelNumberCell(cell);
         } catch (e) {
             // Ignore only if ExcelJS rejects the merged cell.
         }
+    }
+
+    // ====================================================================
+    // NATIVE EXCEL CHART EXPORT
+    //
+    // ExcelJS can write the workbook cells but does not reliably preserve
+    // the native chart when a workbook containing charts is loaded and
+    // rewritten.  Therefore we patch the final XLSX package with the
+    // proven native chart/drawing parts from the approved reference report.
+    // The chart remains a real, editable Excel 3-D chart.
+    // ====================================================================
+    const REFERENCE_NATIVE_CHART_XML_B64 = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9InllcyI/Pg0KPGM6Y2hhcnRTcGFjZSB4bWxuczpjPSJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvZHJhd2luZ21sLzIwMDYvY2hhcnQiIHhtbG5zOmE9Imh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy9kcmF3aW5nbWwvMjAwNi9tYWluIiB4bWxuczpyPSJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvb2ZmaWNlRG9jdW1lbnQvMjAwNi9yZWxhdGlvbnNoaXBzIiB4bWxuczpjMTZyMj0iaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS9vZmZpY2UvZHJhd2luZy8yMDE1LzA2L2NoYXJ0Ij48YzpkYXRlMTkwNCB2YWw9IjAiLz48YzpsYW5nIHZhbD0iZW4tVVMiLz48Yzpyb3VuZGVkQ29ybmVycyB2YWw9IjAiLz48bWM6QWx0ZXJuYXRlQ29udGVudCB4bWxuczptYz0iaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL21hcmt1cC1jb21wYXRpYmlsaXR5LzIwMDYiPjxtYzpDaG9pY2UgUmVxdWlyZXM9ImMxNCIgeG1sbnM6YzE0PSJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS9kcmF3aW5nLzIwMDcvOC8yL2NoYXJ0Ij48YzE0OnN0eWxlIHZhbD0iMTAyIi8+PC9tYzpDaG9pY2U+PG1jOkZhbGxiYWNrPjxjOnN0eWxlIHZhbD0iMiIvPjwvbWM6RmFsbGJhY2s+PC9tYzpBbHRlcm5hdGVDb250ZW50PjxjOmNoYXJ0PjxjOnRpdGxlPjxjOnR4PjxjOnJpY2g+PGE6Ym9keVByIHJvdD0iMCIgc3BjRmlyc3RMYXN0UGFyYT0iMSIgdmVydE92ZXJmbG93PSJlbGxpcHNpcyIgdmVydD0iaG9yeiIgd3JhcD0ic3F1YXJlIiBhbmNob3I9ImN0ciIgYW5jaG9yQ3RyPSIxIi8+PGE6bHN0U3R5bGUvPjxhOnA+PGE6cFByPjxhOmRlZlJQciBzej0iMTQwMCIgYj0iMSIgaT0iMCIgdT0ibm9uZSIgc3RyaWtlPSJub1N0cmlrZSIga2Vybj0iMTIwMCIgc3BjPSIwIiBiYXNlbGluZT0iMCI+PGE6c29saWRGaWxsPjxhOnNjaGVtZUNsciB2YWw9InR4MSI+PGE6bHVtTW9kIHZhbD0iNjUwMDAiLz48YTpsdW1PZmYgdmFsPSIzNTAwMCIvPjwvYTpzY2hlbWVDbHI+PC9hOnNvbGlkRmlsbD48YTpsYXRpbiB0eXBlZmFjZT0iK21uLWx0Ii8+PGE6ZWEgdHlwZWZhY2U9Iittbi1lYSIvPjxhOmNzIHR5cGVmYWNlPSIrbW4tY3MiLz48L2E6ZGVmUlByPjwvYTpwUHI+PGE6cj48YTpyUHIgbGFuZz0iZW4tSU4iIGI9IjEiLz48YTp0PkpldHR5IDwvYTp0PjwvYTpyPjxhOnI+PGE6clByIGxhbmc9ImVuLUlOIiBiPSIxIiBiYXNlbGluZT0iMCIvPjxhOnQ+JmFtcDsgTVYgRGlzY2hhcmdlIDwvYTp0PjwvYTpyPjxhOmVuZFBhcmFSUHIgbGFuZz0iZW4tSU4iIGI9IjEiLz48L2E6cD48L2M6cmljaD48L2M6dHg+PGM6bGF5b3V0PjxjOm1hbnVhbExheW91dD48Yzp4TW9kZSB2YWw9ImVkZ2UiLz48Yzp5TW9kZSB2YWw9ImVkZ2UiLz48Yzp4IHZhbD0iMC40MjIzNDcxMDI1MTEyMzk2OSIvPjxjOnkgdmFsPSI3Ljk0ODI5NDM2NTE5NTE2MjJFLTMiLz48L2M6bWFudWFsTGF5b3V0PjwvYzpsYXlvdXQ+PGM6b3ZlcmxheSB2YWw9IjAiLz48YzpzcFByPjxhOm5vRmlsbC8+PGE6bG4+PGE6bm9GaWxsLz48L2E6bG4+PGE6ZWZmZWN0THN0Lz48L2M6c3BQcj48L2M6dGl0bGU+PGM6YXV0b1RpdGxlRGVsZXRlZCB2YWw9IjAiLz48Yzp2aWV3M0Q+PGM6cm90WCB2YWw9IjE1Ii8+PGM6cm90WSB2YWw9IjIwIi8+PGM6ZGVwdGhQZXJjZW50IHZhbD0iMTAwIi8+PGM6ckFuZ0F4IHZhbD0iMSIvPjwvYzp2aWV3M0Q+PGM6Zmxvb3I+PGM6dGhpY2tuZXNzIHZhbD0iMCIvPjxjOnNwUHI+PGE6bm9GaWxsLz48YTpsbj48YTpub0ZpbGwvPjwvYTpsbj48YTplZmZlY3RMc3QvPjxhOnNwM2QvPjwvYzpzcFByPjwvYzpmbG9vcj48YzpzaWRlV2FsbD48Yzp0aGlja25lc3MgdmFsPSIwIi8+PGM6c3BQcj48YTpub0ZpbGwvPjxhOmxuPjxhOm5vRmlsbC8+PC9hOmxuPjxhOmVmZmVjdExzdC8+PGE6c3AzZC8+PC9jOnNwUHI+PC9jOnNpZGVXYWxsPjxjOmJhY2tXYWxsPjxjOnRoaWNrbmVzcyB2YWw9IjAiLz48YzpzcFByPjxhOm5vRmlsbC8+PGE6bG4+PGE6bm9GaWxsLz48L2E6bG4+PGE6ZWZmZWN0THN0Lz48YTpzcDNkLz48L2M6c3BQcj48L2M6YmFja1dhbGw+PGM6cGxvdEFyZWE+PGM6bGF5b3V0PjxjOm1hbnVhbExheW91dD48YzpsYXlvdXRUYXJnZXQgdmFsPSJpbm5lciIvPjxjOnhNb2RlIHZhbD0iZWRnZSIvPjxjOnlNb2RlIHZhbD0iZWRnZSIvPjxjOnggdmFsPSIzLjM2Njc5MDQxODgwMzI4MzFFLTIiLz48Yzp5IHZhbD0iNy45MTI1MzIwMDQxOTQwOTkxRS0yIi8+PGM6dyB2YWw9IjAuOTU2NDk1Mjk3MjQyNzc0MjciLz48YzpoIHZhbD0iMC43MjAwOTEyNTk2MTcyMTYyMSIvPjwvYzptYW51YWxMYXlvdXQ+PC9jOmxheW91dD48YzpiYXIzRENoYXJ0PjxjOmJhckRpciB2YWw9ImNvbCIvPjxjOmdyb3VwaW5nIHZhbD0iY2x1c3RlcmVkIi8+PGM6dmFyeUNvbG9ycyB2YWw9IjAiLz48YzpzZXI+PGM6aWR4IHZhbD0iMyIvPjxjOm9yZGVyIHZhbD0iMCIvPjxjOnR4PjxjOnN0clJlZj48YzpmPidDYXJnbyBTYXRpc3RpY3MnISRBSCQ4PC9jOmY+PGM6c3RyQ2FjaGU+PGM6cHRDb3VudCB2YWw9IjEiLz48YzpwdCBpZHg9IjAiPjxjOnY+SmV0dHkgRGlzY2hhcmdlIChTdGVlbCBQbGFudCktQXZnIDogNDIsNTk3IE1UPC9jOnY+PC9jOnB0PjwvYzpzdHJDYWNoZT48L2M6c3RyUmVmPjwvYzp0eD48YzpzcFByPjxhOnNvbGlkRmlsbD48YTpzY2hlbWVDbHIgdmFsPSJhY2NlbnQxIi8+PC9hOnNvbGlkRmlsbD48L2M6c3BQcj48YzppbnZlcnRJZk5lZ2F0aXZlIHZhbD0iMCIvPjxjOmRMYmxzPjxjOnNwUHI+PGE6bm9GaWxsLz48YTpsbj48YTpub0ZpbGwvPjwvYTpsbj48YTplZmZlY3RMc3QvPjwvYzpzcFByPjxjOnR4UHI+PGE6Ym9keVByIHJvdD0iLTU0MDAwMDAiIHZlcnQ9ImhvcnoiIHdyYXA9InNxdWFyZSIgbElucz0iMzgxMDAiIHRJbnM9IjE5MDUwIiBySW5zPSIzODEwMCIgYklucz0iMTkwNTAiIGFuY2hvcj0iY3RyIj48YTpzcEF1dG9GaXQvPjwvYTpib2R5UHI+PGE6bHN0U3R5bGUvPjxhOnA+PGE6cFByPjxhOmRlZlJQci8+PC9hOnBQcj48YTplbmRQYXJhUlByIGxhbmc9ImVuLVVTIi8+PC9hOnA+PC9jOnR4UHI+PGM6c2hvd0xlZ2VuZEtleSB2YWw9IjAiLz48YzpzaG93VmFsIHZhbD0iMSIvPjxjOnNob3dDYXROYW1lIHZhbD0iMCIvPjxjOnNob3dTZXJOYW1lIHZhbD0iMCIvPjxjOnNob3dQZXJjZW50IHZhbD0iMCIvPjxjOnNob3dCdWJibGVTaXplIHZhbD0iMCIvPjxjOnNob3dMZWFkZXJMaW5lcyB2YWw9IjAiLz48YzpleHRMc3Q+PGM6ZXh0IHVyaT0ie0NFNjUzN0ExLUQ2RkMtNGY2NS05RDkxLTcyMjRDNDk0NThCQn0iIHhtbG5zOmMxNT0iaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS9vZmZpY2UvZHJhd2luZy8yMDEyL2NoYXJ0Ij48YzE1OmxheW91dC8+PGMxNTpzaG93TGVhZGVyTGluZXMgdmFsPSIxIi8+PC9jOmV4dD48L2M6ZXh0THN0PjwvYzpkTGJscz48Yzp2YWw+PGM6bnVtUmVmPjxjOmY+J0NhcmdvIFNhdGlzdGljcychJEFIJDk6JEFIJDM5PC9jOmY+PGM6bnVtQ2FjaGU+PGM6Zm9ybWF0Q29kZT5fKCogIywjIzBfKTtfKCogXCgjLCMjMFwpO18oKiAiLSI/P18pO18oQF8pPC9jOmZvcm1hdENvZGU+PGM6cHRDb3VudCB2YWw9IjMxIi8+PGM6cHQgaWR4PSIwIj48Yzp2PjA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxIj48Yzp2PjEwMDQ4PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMiI+PGM6dj4xMTM4MTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjMiPjxjOnY+MTU1NDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI0Ij48Yzp2PjEzNDQyPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNSI+PGM6dj4zNDQ2MDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjYiPjxjOnY+Mzg1MDg8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI3Ij48Yzp2PjMwMzg0PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iOCI+PGM6dj4yNTUzMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjkiPjxjOnY+NzUxOTM8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMCI+PGM6dj43Mzg5NzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjExIj48Yzp2PjY2MDgzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTIiPjxjOnY+NzE0MDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMyI+PGM6dj43MTc3NTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE0Ij48Yzp2PjcxMDQ1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTUiPjxjOnY+NzI4NDI8L2M6dj48L2M6cHQ+PC9jOm51bUNhY2hlPjwvYzpudW1SZWY+PC9jOnZhbD48YzpleHRMc3Q+PGM6ZXh0IHVyaT0ie0MzMzgwQ0M0LTVENkUtNDA5Qy1CRTMyLUU3MkQyOTczNTNDQ30iIHhtbG5zOmMxNj0iaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS9vZmZpY2UvZHJhd2luZy8yMDE0L2NoYXJ0Ij48YzE2OnVuaXF1ZUlkIHZhbD0iezAwMDAwMDAxLUMyQzAtNERDMi1COEYyLUQ3MEQ0MEM3Q0U3OX0iLz48L2M6ZXh0PjwvYzpleHRMc3Q+PC9jOnNlcj48YzpzZXI+PGM6aWR4IHZhbD0iMiIvPjxjOm9yZGVyIHZhbD0iMSIvPjxjOnR4PjxjOnN0clJlZj48YzpmPidDYXJnbyBTYXRpc3RpY3MnISRBTCQ4PC9jOmY+PGM6c3RyQ2FjaGU+PGM6cHRDb3VudCB2YWw9IjEiLz48YzpwdCBpZHg9IjAiPjxjOnY+RGFpbHkgQ29uc3VtcHRpb24tQXZnIDogNjMsNTMyIE1UPC9jOnY+PC9jOnB0PjwvYzpzdHJDYWNoZT48L2M6c3RyUmVmPjwvYzp0eD48YzpzcFByPjxhOnNvbGlkRmlsbD48YTpzY2hlbWVDbHIgdmFsPSJhY2NlbnQzIi8+PC9hOnNvbGlkRmlsbD48YTpsbj48YTpub0ZpbGwvPjwvYTpsbj48YTplZmZlY3RMc3QvPjxhOnNwM2QvPjwvYzpzcFByPjxjOmludmVydElmTmVnYXRpdmUgdmFsPSIwIi8+PGM6ZExibHM+PGM6c3BQcj48YTpub0ZpbGwvPjxhOmxuPjxhOm5vRmlsbC8+PC9hOmxuPjxhOmVmZmVjdExzdC8+PC9jOnNwUHI+PGM6dHhQcj48YTpib2R5UHIgcm90PSItNTQwMDAwMCIgdmVydD0iaG9yeiIgd3JhcD0ic3F1YXJlIiBsSW5zPSIzODEwMCIgdElucz0iMTkwNTAiIHJJbnM9IjM4MTAwIiBiSW5zPSIxOTA1MCIgYW5jaG9yPSJjdHIiPjxhOnNwQXV0b0ZpdC8+PC9hOmJvZHlQcj48YTpsc3RTdHlsZS8+PGE6cD48YTpwUHI+PGE6ZGVmUlByLz48L2E6cFByPjxhOmVuZFBhcmFSUHIgbGFuZz0iZW4tVVMiLz48L2E6cD48L2M6dHhQcj48YzpzaG93TGVnZW5kS2V5IHZhbD0iMCIvPjxjOnNob3dWYWwgdmFsPSIxIi8+PGM6c2hvd0NhdE5hbWUgdmFsPSIwIi8+PGM6c2hvd1Nlck5hbWUgdmFsPSIwIi8+PGM6c2hvd1BlcmNlbnQgdmFsPSIwIi8+PGM6c2hvd0J1YmJsZVNpemUgdmFsPSIwIi8+PGM6c2hvd0xlYWRlckxpbmVzIHZhbD0iMCIvPjxjOmV4dExzdD48YzpleHQgdXJpPSJ7Q0U2NTM3QTEtRDZGQy00ZjY1LTlEOTEtNzIyNEM0OTQ1OEJCfSIgeG1sbnM6YzE1PSJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS9kcmF3aW5nLzIwMTIvY2hhcnQiPjxjMTU6bGF5b3V0Lz48YzE1OnNob3dMZWFkZXJMaW5lcyB2YWw9IjEiLz48L2M6ZXh0PjwvYzpleHRMc3Q+PC9jOmRMYmxzPjxjOmNhdD48YzpudW1SZWY+PGM6Zj4nQ2FyZ28gU2F0aXN0aWNzJyEkQUYkOTokQUYkMzk8L2M6Zj48YzpudW1DYWNoZT48Yzpmb3JtYXRDb2RlPm0vZC95eXl5PC9jOmZvcm1hdENvZGU+PGM6cHRDb3VudCB2YWw9IjMxIi8+PGM6cHQgaWR4PSIwIj48Yzp2PjQ2MjA0PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMSI+PGM6dj40NjIwNTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjIiPjxjOnY+NDYyMDY8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIzIj48Yzp2PjQ2MjA3PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNCI+PGM6dj40NjIwODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjUiPjxjOnY+NDYyMDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI2Ij48Yzp2PjQ2MjEwPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNyI+PGM6dj40NjIxMTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjgiPjxjOnY+NDYyMTI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI5Ij48Yzp2PjQ2MjEzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTAiPjxjOnY+NDYyMTQ8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMSI+PGM6dj40NjIxNTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEyIj48Yzp2PjQ2MjE2PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTMiPjxjOnY+NDYyMTc8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNCI+PGM6dj40NjIxODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE1Ij48Yzp2PjQ2MjE5PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTYiPjxjOnY+NDYyMjA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNyI+PGM6dj40NjIyMTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE4Ij48Yzp2PjQ2MjIyPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTkiPjxjOnY+NDYyMjM8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyMCI+PGM6dj40NjIyNDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjIxIj48Yzp2PjQ2MjI1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjIiPjxjOnY+NDYyMjY8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyMyI+PGM6dj40NjIyNzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjI0Ij48Yzp2PjQ2MjI4PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjUiPjxjOnY+NDYyMjk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyNiI+PGM6dj40NjIzMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjI3Ij48Yzp2PjQ2MjMxPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjgiPjxjOnY+NDYyMzI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyOSI+PGM6dj40NjIzMzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjMwIj48Yzp2PjQ2MjM0PC9jOnY+PC9jOnB0PjwvYzpudW1DYWNoZT48L2M6bnVtUmVmPjwvYzpjYXQ+PGM6dmFsPjxjOm51bVJlZj48YzpmPidDYXJnbyBTYXRpc3RpY3MnISRBTCQ5OiRBTCQzOTwvYzpmPjxjOm51bUNhY2hlPjxjOmZvcm1hdENvZGU+XygqICMsIyMwXyk7XygqIFwoIywjIzBcKTtfKCogIi0iPz9fKTtfKEBfKTwvYzpmb3JtYXRDb2RlPjxjOnB0Q291bnQgdmFsPSIzMSIvPjxjOnB0IGlkeD0iMCI+PGM6dj42OTgyMzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEiPjxjOnY+NTU2NTM8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyIj48Yzp2PjUzMjA3Ljc0PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMyI+PGM6dj42NzU5OC4zODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjQiPjxjOnY+NzA5MTYuNDU5OTk5OTk5OTkyPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNSI+PGM6dj42ODIwMi45NTk5OTk5OTk5OTI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI2Ij48Yzp2Pjc0MjEzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNyI+PGM6dj41NDE4My4yODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjgiPjxjOnY+MjMxMDEuMDI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI5Ij48Yzp2PjU1MDU1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTAiPjxjOnY+NTkxOTcuOTE8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMSI+PGM6dj43MDQwOTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEyIj48Yzp2Pjc2OTE2LjY0OTk5OTk5OTk5NDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEzIj48Yzp2PjcyNTExLjg2PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTQiPjxjOnY+NzU0NzIuOTg8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNSI+PGM6dj43MDA1Ni4yODwvYzp2PjwvYzpwdD48L2M6bnVtQ2FjaGU+PC9jOm51bVJlZj48L2M6dmFsPjxjOmV4dExzdD48YzpleHQgdXJpPSJ7QzMzODBDQzQtNUQ2RS00MDlDLUJFMzItRTcyRDI5NzM1M0NDfSIgeG1sbnM6YzE2PSJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS9kcmF3aW5nLzIwMTQvY2hhcnQiPjxjMTY6dW5pcXVlSWQgdmFsPSJ7MDAwMDAwMDItNEJGMC00Rjg1LUE5MEItNDlFMEYzNUVFQzFFfSIvPjwvYzpleHQ+PC9jOmV4dExzdD48L2M6c2VyPjxjOnNlcj48YzppZHggdmFsPSIxIi8+PGM6b3JkZXIgdmFsPSIyIi8+PGM6dHg+PGM6c3RyUmVmPjxjOmY+J0NhcmdvIFNhdGlzdGljcychJEFLJDg8L2M6Zj48YzpzdHJDYWNoZT48YzpwdENvdW50IHZhbD0iMSIvPjxjOnB0IGlkeD0iMCI+PGM6dj5NViBEaXNjaGFyZ2UtQXZnIDogMjAsMzM5IE1UPC9jOnY+PC9jOnB0PjwvYzpzdHJDYWNoZT48L2M6c3RyUmVmPjwvYzp0eD48YzpzcFByPjxhOnNvbGlkRmlsbD48YTpzY2hlbWVDbHIgdmFsPSJhY2NlbnQyIi8+PC9hOnNvbGlkRmlsbD48YTpsbj48YTpub0ZpbGwvPjwvYTpsbj48YTplZmZlY3RMc3QvPjxhOnNwM2QvPjwvYzpzcFByPjxjOmludmVydElmTmVnYXRpdmUgdmFsPSIwIi8+PGM6ZExibHM+PGM6c3BQcj48YTpub0ZpbGwvPjxhOmxuPjxhOm5vRmlsbC8+PC9hOmxuPjxhOmVmZmVjdExzdC8+PC9jOnNwUHI+PGM6dHhQcj48YTpib2R5UHIgcm90PSItNTQwMDAwMCIgdmVydD0iaG9yeiIgd3JhcD0ic3F1YXJlIiBsSW5zPSIzODEwMCIgdElucz0iMTkwNTAiIHJJbnM9IjM4MTAwIiBiSW5zPSIxOTA1MCIgYW5jaG9yPSJjdHIiPjxhOnNwQXV0b0ZpdC8+PC9hOmJvZHlQcj48YTpsc3RTdHlsZS8+PGE6cD48YTpwUHI+PGE6ZGVmUlByLz48L2E6cFByPjxhOmVuZFBhcmFSUHIgbGFuZz0iZW4tVVMiLz48L2E6cD48L2M6dHhQcj48YzpzaG93TGVnZW5kS2V5IHZhbD0iMCIvPjxjOnNob3dWYWwgdmFsPSIxIi8+PGM6c2hvd0NhdE5hbWUgdmFsPSIwIi8+PGM6c2hvd1Nlck5hbWUgdmFsPSIwIi8+PGM6c2hvd1BlcmNlbnQgdmFsPSIwIi8+PGM6c2hvd0J1YmJsZVNpemUgdmFsPSIwIi8+PGM6c2hvd0xlYWRlckxpbmVzIHZhbD0iMCIvPjxjOmV4dExzdD48YzpleHQgdXJpPSJ7Q0U2NTM3QTEtRDZGQy00ZjY1LTlEOTEtNzIyNEM0OTQ1OEJCfSIgeG1sbnM6YzE1PSJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS9kcmF3aW5nLzIwMTIvY2hhcnQiPjxjMTU6bGF5b3V0Lz48YzE1OnNob3dMZWFkZXJMaW5lcyB2YWw9IjEiLz48L2M6ZXh0PjwvYzpleHRMc3Q+PC9jOmRMYmxzPjxjOmNhdD48YzpudW1SZWY+PGM6Zj4nQ2FyZ28gU2F0aXN0aWNzJyEkQUYkOTokQUYkMzk8L2M6Zj48YzpudW1DYWNoZT48Yzpmb3JtYXRDb2RlPm0vZC95eXl5PC9jOmZvcm1hdENvZGU+PGM6cHRDb3VudCB2YWw9IjMxIi8+PGM6cHQgaWR4PSIwIj48Yzp2PjQ2MjA0PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMSI+PGM6dj40NjIwNTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjIiPjxjOnY+NDYyMDY8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIzIj48Yzp2PjQ2MjA3PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNCI+PGM6dj40NjIwODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjUiPjxjOnY+NDYyMDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI2Ij48Yzp2PjQ2MjEwPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNyI+PGM6dj40NjIxMTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjgiPjxjOnY+NDYyMTI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI5Ij48Yzp2PjQ2MjEzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTAiPjxjOnY+NDYyMTQ8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMSI+PGM6dj40NjIxNTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEyIj48Yzp2PjQ2MjE2PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTMiPjxjOnY+NDYyMTc8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNCI+PGM6dj40NjIxODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE1Ij48Yzp2PjQ2MjE5PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTYiPjxjOnY+NDYyMjA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNyI+PGM6dj40NjIyMTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE4Ij48Yzp2PjQ2MjIyPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTkiPjxjOnY+NDYyMjM8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyMCI+PGM6dj40NjIyNDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjIxIj48Yzp2PjQ2MjI1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjIiPjxjOnY+NDYyMjY8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyMyI+PGM6dj40NjIyNzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjI0Ij48Yzp2PjQ2MjI4PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjUiPjxjOnY+NDYyMjk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyNiI+PGM6dj40NjIzMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjI3Ij48Yzp2PjQ2MjMxPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMjgiPjxjOnY+NDYyMzI8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyOSI+PGM6dj40NjIzMzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjMwIj48Yzp2PjQ2MjM0PC9jOnY+PC9jOnB0PjwvYzpudW1DYWNoZT48L2M6bnVtUmVmPjwvYzpjYXQ+PGM6dmFsPjxjOm51bVJlZj48YzpmPidDYXJnbyBTYXRpc3RpY3MnISRBSyQ5OiRBSyQzOTwvYzpmPjxjOm51bUNhY2hlPjxjOmZvcm1hdENvZGU+XygqICMsIyMwXyk7XygqIFwoIywjIzBcKTtfKCogIi0iPz9fKTtfKEBfKTwvYzpmb3JtYXRDb2RlPjxjOnB0Q291bnQgdmFsPSIzMSIvPjxjOnB0IGlkeD0iMCI+PGM6dj4xMDcwMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEiPjxjOnY+MTcwMDA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIyIj48Yzp2PjEwMDcwPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMyI+PGM6dj4xMDM1MDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjQiPjxjOnY+MTMwMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjUiPjxjOnY+MTEwNzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjYiPjxjOnY+MTYwMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjciPjxjOnY+NjM0MzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjgiPjxjOnY+MzIxNzA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI5Ij48Yzp2PjI2MTA3PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTAiPjxjOnY+Mzg4ODA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMSI+PGM6dj40NTczNTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEyIj48Yzp2PjM1Nzg1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTMiPjxjOnY+MjI4MDA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxNCI+PGM6dj4zNDE3MDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE1Ij48Yzp2PjMxMzAwPC9jOnY+PC9jOnB0PjwvYzpudW1DYWNoZT48L2M6bnVtUmVmPjwvYzp2YWw+PGM6ZXh0THN0PjxjOmV4dCB1cmk9IntDMzM4MENDNC01RDZFLTQwOUMtQkUzMi1FNzJEMjk3MzUzQ0N9IiB4bWxuczpjMTY9Imh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vb2ZmaWNlL2RyYXdpbmcvMjAxNC9jaGFydCI+PGMxNjp1bmlxdWVJZCB2YWw9InswMDAwMDAwMS00QkYwLTRGODUtQTkwQi00OUUwRjM1RUVDMUV9Ii8+PC9jOmV4dD48L2M6ZXh0THN0PjwvYzpzZXI+PGM6c2VyPjxjOmlkeCB2YWw9IjQiLz48YzpvcmRlciB2YWw9IjMiLz48Yzp0eD48YzpzdHJSZWY+PGM6Zj4nQ2FyZ28gU2F0aXN0aWNzJyEkQUokODwvYzpmPjxjOnN0ckNhY2hlPjxjOnB0Q291bnQgdmFsPSIxIi8+PGM6cHQgaWR4PSIwIj48Yzp2Pk1CQyBEaXNjaGFyZ2UtQXZnIDogMjcsNjk1IE1UPC9jOnY+PC9jOnB0PjwvYzpzdHJDYWNoZT48L2M6c3RyUmVmPjwvYzp0eD48YzpzcFByPjxhOnNvbGlkRmlsbD48YTpzY2hlbWVDbHIgdmFsPSJhY2NlbnQ0Ij48YTpsdW1Nb2QgdmFsPSI0MDAwMCIvPjxhOmx1bU9mZiB2YWw9IjYwMDAwIi8+PC9hOnNjaGVtZUNscj48L2E6c29saWRGaWxsPjwvYzpzcFByPjxjOmludmVydElmTmVnYXRpdmUgdmFsPSIwIi8+PGM6ZExibHM+PGM6c3BQcj48YTpub0ZpbGwvPjxhOmxuPjxhOm5vRmlsbC8+PC9hOmxuPjxhOmVmZmVjdExzdC8+PC9jOnNwUHI+PGM6dHhQcj48YTpib2R5UHIgcm90PSItNTQwMDAwMCIgdmVydD0iaG9yeiIgd3JhcD0ic3F1YXJlIiBsSW5zPSIzODEwMCIgdElucz0iMTkwNTAiIHJJbnM9IjM4MTAwIiBiSW5zPSIxOTA1MCIgYW5jaG9yPSJjdHIiPjxhOnNwQXV0b0ZpdC8+PC9hOmJvZHlQcj48YTpsc3RTdHlsZS8+PGE6cD48YTpwUHI+PGE6ZGVmUlByLz48L2E6cFByPjxhOmVuZFBhcmFSUHIgbGFuZz0iZW4tVVMiLz48L2E6cD48L2M6dHhQcj48YzpzaG93TGVnZW5kS2V5IHZhbD0iMCIvPjxjOnNob3dWYWwgdmFsPSIxIi8+PGM6c2hvd0NhdE5hbWUgdmFsPSIwIi8+PGM6c2hvd1Nlck5hbWUgdmFsPSIwIi8+PGM6c2hvd1BlcmNlbnQgdmFsPSIwIi8+PGM6c2hvd0J1YmJsZVNpemUgdmFsPSIwIi8+PGM6c2hvd0xlYWRlckxpbmVzIHZhbD0iMCIvPjxjOmV4dExzdD48YzpleHQgdXJpPSJ7Q0U2NTM3QTEtRDZGQy00ZjY1LTlEOTEtNzIyNEM0OTQ1OEJCfSIgeG1sbnM6YzE1PSJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS9kcmF3aW5nLzIwMTIvY2hhcnQiPjxjMTU6bGF5b3V0Lz48YzE1OnNob3dMZWFkZXJMaW5lcyB2YWw9IjEiLz48L2M6ZXh0PjwvYzpleHRMc3Q+PC9jOmRMYmxzPjxjOnZhbD48YzpudW1SZWY+PGM6Zj4nQ2FyZ28gU2F0aXN0aWNzJyEkQUokOTokQUokMzk8L2M6Zj48YzpudW1DYWNoZT48Yzpmb3JtYXRDb2RlPl8oKiAjLCMjMF8pO18oKiBcKCMsIyMwXCk7XygqICItIj8/Xyk7XyhAXyk8L2M6Zm9ybWF0Q29kZT48YzpwdENvdW50IHZhbD0iMzEiLz48YzpwdCBpZHg9IjAiPjxjOnY+MDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjEiPjxjOnY+MTE0ODwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjIiPjxjOnY+MTE4MTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjMiPjxjOnY+MTQyNDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI0Ij48Yzp2PjExMjMzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iNSI+PGM6dj4yOTQ2MDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjYiPjxjOnY+MzIwNjA8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSI3Ij48Yzp2PjI2MTg0PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iOCI+PGM6dj4xNTUzMDwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjkiPjxjOnY+NTExOTE8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMCI+PGM6dj41Mjc0NzwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjExIj48Yzp2PjI0OTgzPC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTIiPjxjOnY+NTMyMDk8L2M6dj48L2M6cHQ+PGM6cHQgaWR4PSIxMyI+PGM6dj40NTY3NTwvYzp2PjwvYzpwdD48YzpwdCBpZHg9IjE0Ij48Yzp2PjQyMTQ1PC9jOnY+PC9jOnB0PjxjOnB0IGlkeD0iMTUiPjxjOnY+NDIxMjI8L2M6dj48L2M6cHQ+PC9jOm51bUNhY2hlPjwvYzpudW1SZWY+PC9jOnZhbD48YzpleHRMc3Q+PGM6ZXh0IHVyaT0ie0MzMzgwQ0M0LTVENkUtNDA5Qy1CRTMyLUU3MkQyOTczNTNDQ30iIHhtbG5zOmMxNj0iaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS9vZmZpY2UvZHJhd2luZy8yMDE0L2NoYXJ0Ij48YzE2OnVuaXF1ZUlkIHZhbD0iezAwMDAwMDAyLUMyRDQtNEE1QS1CRUE1LTYyNjJBNTBBRDIyRH0iLz48L2M6ZXh0PjwvYzpleHRMc3Q+PC9jOnNlcj48YzpkTGJscz48YzpzaG93TGVnZW5kS2V5IHZhbD0iMCIvPjxjOnNob3dWYWwgdmFsPSIxIi8+PGM6c2hvd0NhdE5hbWUgdmFsPSIwIi8+PGM6c2hvd1Nlck5hbWUgdmFsPSIwIi8+PGM6c2hvd1BlcmNlbnQgdmFsPSIwIi8+PGM6c2hvd0J1YmJsZVNpemUgdmFsPSIwIi8+PC9jOmRMYmxzPjxjOmdhcFdpZHRoIHZhbD0iMTUwIi8+PGM6c2hhcGUgdmFsPSJib3giLz48YzpheElkIHZhbD0iMTYxNDg0MTE4NCIvPjxjOmF4SWQgdmFsPSIxIi8+PGM6YXhJZCB2YWw9IjAiLz48L2M6YmFyM0RDaGFydD48YzpjYXRBeD48YzpheElkIHZhbD0iMTYxNDg0MTE4NCIvPjxjOnNjYWxpbmc+PGM6b3JpZW50YXRpb24gdmFsPSJtaW5NYXgiLz48L2M6c2NhbGluZz48YzpkZWxldGUgdmFsPSIwIi8+PGM6YXhQb3MgdmFsPSJiIi8+PGM6bnVtRm10IGZvcm1hdENvZGU9Im1cL2RcL3l5eXkiIHNvdXJjZUxpbmtlZD0iMCIvPjxjOm1ham9yVGlja01hcmsgdmFsPSJvdXQiLz48YzptaW5vclRpY2tNYXJrIHZhbD0ibm9uZSIvPjxjOnRpY2tMYmxQb3MgdmFsPSJuZXh0VG8iLz48YzpzcFByPjxhOm5vRmlsbC8+PGE6bG4+PGE6bm9GaWxsLz48L2E6bG4+PGE6ZWZmZWN0THN0Lz48L2M6c3BQcj48Yzp0eFByPjxhOmJvZHlQciByb3Q9Ii02MDAwMDAwMCIgc3BjRmlyc3RMYXN0UGFyYT0iMSIgdmVydE92ZXJmbG93PSJlbGxpcHNpcyIgdmVydD0iaG9yeiIgd3JhcD0ic3F1YXJlIiBhbmNob3I9ImIiIGFuY2hvckN0cj0iMCIvPjxhOmxzdFN0eWxlLz48YTpwPjxhOnBQcj48YTpkZWZSUHIgc3o9IjExMDAiIGI9IjEiIGk9IjAiIHU9Im5vbmUiIHN0cmlrZT0ibm9TdHJpa2UiIGtlcm49IjEyMDAiIGJhc2VsaW5lPSIwIj48YTpzb2xpZEZpbGw+PGE6c2NoZW1lQ2xyIHZhbD0idHgxIj48YTpsdW1Nb2QgdmFsPSI2NTAwMCIvPjxhOmx1bU9mZiB2YWw9IjM1MDAwIi8+PC9hOnNjaGVtZUNscj48L2E6c29saWRGaWxsPjxhOmxhdGluIHR5cGVmYWNlPSIrbW4tbHQiLz48YTplYSB0eXBlZmFjZT0iK21uLWVhIi8+PGE6Y3MgdHlwZWZhY2U9Iittbi1jcyIvPjwvYTpkZWZSUHI+PC9hOnBQcj48YTplbmRQYXJhUlByIGxhbmc9ImVuLVVTIi8+PC9hOnA+PC9jOnR4UHI+PGM6Y3Jvc3NBeCB2YWw9IjEiLz48Yzpjcm9zc2VzIHZhbD0iYXV0b1plcm8iLz48YzphdXRvIHZhbD0iMSIvPjxjOmxibEFsZ24gdmFsPSJjdHIiLz48YzpsYmxPZmZzZXQgdmFsPSIxMDAiLz48Yzpub011bHRpTHZsTGJsIHZhbD0iMSIvPjwvYzpjYXRBeD48Yzp2YWxBeD48YzpheElkIHZhbD0iMSIvPjxjOnNjYWxpbmc+PGM6b3JpZW50YXRpb24gdmFsPSJtaW5NYXgiLz48L2M6c2NhbGluZz48YzpkZWxldGUgdmFsPSIwIi8+PGM6YXhQb3MgdmFsPSJsIi8+PGM6bWFqb3JHcmlkbGluZXM+PGM6c3BQcj48YTpsbiB3PSI5NTI1IiBjYXA9ImZsYXQiIGNtcGQ9InNuZyIgYWxnbj0iY3RyIj48YTpzb2xpZEZpbGw+PGE6c2NoZW1lQ2xyIHZhbD0idHgxIj48YTpsdW1Nb2QgdmFsPSIxNTAwMCIvPjxhOmx1bU9mZiB2YWw9Ijg1MDAwIi8+PC9hOnNjaGVtZUNscj48L2E6c29saWRGaWxsPjxhOnJvdW5kLz48L2E6bG4+PGE6ZWZmZWN0THN0Lz48L2M6c3BQcj48L2M6bWFqb3JHcmlkbGluZXM+PGM6bnVtRm10IGZvcm1hdENvZGU9Il8oKiAjLCMjMF8pO18oKiBcKCMsIyMwXCk7XygqICZxdW90Oy0mcXVvdDs/P18pO18oQF8pIiBzb3VyY2VMaW5rZWQ9IjEiLz48YzptYWpvclRpY2tNYXJrIHZhbD0ibm9uZSIvPjxjOm1pbm9yVGlja01hcmsgdmFsPSJub25lIi8+PGM6dGlja0xibFBvcyB2YWw9Im5leHRUbyIvPjxjOnNwUHI+PGE6bm9GaWxsLz48YTpsbj48YTpub0ZpbGwvPjwvYTpsbj48YTplZmZlY3RMc3QvPjwvYzpzcFByPjxjOnR4UHI+PGE6Ym9keVByIHJvdD0iLTYwMDAwMDAwIiBzcGNGaXJzdExhc3RQYXJhPSIxIiB2ZXJ0T3ZlcmZsb3c9ImVsbGlwc2lzIiB2ZXJ0PSJob3J6IiB3cmFwPSJzcXVhcmUiIGFuY2hvcj0iY3RyIiBhbmNob3JDdHI9IjEiLz48YTpsc3RTdHlsZS8+PGE6cD48YTpwUHI+PGE6ZGVmUlByIHN6PSIxMjAwIiBiPSIwIiBpPSIwIiB1PSJub25lIiBzdHJpa2U9Im5vU3RyaWtlIiBrZXJuPSIxMjAwIiBiYXNlbGluZT0iMCI+PGE6c29saWRGaWxsPjxhOnNjaGVtZUNsciB2YWw9InR4MSI+PGE6bHVtTW9kIHZhbD0iNjUwMDAiLz48YTpsdW1PZmYgdmFsPSIzNTAwMCIvPjwvYTpzY2hlbWVDbHI+PC9hOnNvbGlkRmlsbD48YTpsYXRpbiB0eXBlZmFjZT0iK21uLWx0Ii8+PGE6ZWEgdHlwZWZhY2U9Iittbi1lYSIvPjxhOmNzIHR5cGVmYWNlPSIrbW4tY3MiLz48L2E6ZGVmUlByPjwvYTpwUHI+PGE6ZW5kUGFyYVJQciBsYW5nPSJlbi1VUyIvPjwvYTpwPjwvYzp0eFByPjxjOmNyb3NzQXggdmFsPSIxNjE0ODQxMTg0Ii8+PGM6Y3Jvc3NlcyB2YWw9ImF1dG9aZXJvIi8+PGM6Y3Jvc3NCZXR3ZWVuIHZhbD0iYmV0d2VlbiIvPjxjOm1ham9yVW5pdCB2YWw9IjI1MDAwIi8+PC9jOnZhbEF4PjxjOnNwUHI+PGE6bm9GaWxsLz48YTpsbiB3PSIyNTQwMCI+PGE6bm9GaWxsLz48L2E6bG4+PC9jOnNwUHI+PC9jOnBsb3RBcmVhPjxjOmxlZ2VuZD48YzpsZWdlbmRQb3MgdmFsPSJiIi8+PGM6bGF5b3V0PjxjOm1hbnVhbExheW91dD48Yzp4TW9kZSB2YWw9ImVkZ2UiLz48Yzp5TW9kZSB2YWw9ImVkZ2UiLz48Yzp4IHZhbD0iMC4xMzIzMTkxNjY3Mjg3NjQ1OSIvPjxjOnkgdmFsPSIwLjkyMjU5MTM5MTIzNjg5MTcxIi8+PGM6dyB2YWw9IjAuNzYxMTY5NDMwODI3NjU0MDkiLz48YzpoIHZhbD0iNC42Nzk3Mjk3MzUxNjEzNTg3RS0yIi8+PC9jOm1hbnVhbExheW91dD48L2M6bGF5b3V0PjxjOm92ZXJsYXkgdmFsPSIwIi8+PGM6c3BQcj48YTpub0ZpbGwvPjxhOmxuPjxhOm5vRmlsbC8+PC9hOmxuPjxhOmVmZmVjdExzdC8+PC9jOnNwUHI+PGM6dHhQcj48YTpib2R5UHIgcm90PSIwIiBzcGNGaXJzdExhc3RQYXJhPSIxIiB2ZXJ0T3ZlcmZsb3c9ImVsbGlwc2lzIiB2ZXJ0PSJob3J6IiB3cmFwPSJzcXVhcmUiIGFuY2hvcj0iY3RyIiBhbmNob3JDdHI9IjEiLz48YTpsc3RTdHlsZS8+PGE6cD48YTpwUHI+PGE6ZGVmUlByIHN6PSIxNDAwIiBiPSIwIiBpPSIwIiB1PSJub25lIiBzdHJpa2U9Im5vU3RyaWtlIiBrZXJuPSIxMjAwIiBiYXNlbGluZT0iMCI+PGE6c29saWRGaWxsPjxhOnNjaGVtZUNsciB2YWw9InR4MSI+PGE6bHVtTW9kIHZhbD0iNjUwMDAiLz48YTpsdW1PZmYgdmFsPSIzNTAwMCIvPjwvYTpzY2hlbWVDbHI+PC9hOnNvbGlkRmlsbD48YTpsYXRpbiB0eXBlZmFjZT0iK21uLWx0Ii8+PGE6ZWEgdHlwZWZhY2U9Iittbi1lYSIvPjxhOmNzIHR5cGVmYWNlPSIrbW4tY3MiLz48L2E6ZGVmUlByPjwvYTpwUHI+PGE6ZW5kUGFyYVJQciBsYW5nPSJlbi1VUyIvPjwvYTpwPjwvYzp0eFByPjwvYzpsZWdlbmQ+PGM6cGxvdFZpc09ubHkgdmFsPSIxIi8+PGM6ZGlzcEJsYW5rc0FzIHZhbD0iZ2FwIi8+PGM6c2hvd0RMYmxzT3Zlck1heCB2YWw9IjAiLz48L2M6Y2hhcnQ+PGM6c3BQcj48YTpzb2xpZEZpbGw+PGE6c2NoZW1lQ2xyIHZhbD0iYmcxIi8+PC9hOnNvbGlkRmlsbD48YTpsbiB3PSI5NTI1IiBjYXA9ImZsYXQiIGNtcGQ9InNuZyIgYWxnbj0iY3RyIj48YTpzb2xpZEZpbGw+PGE6c2NoZW1lQ2xyIHZhbD0idHgxIj48YTpsdW1Nb2QgdmFsPSIxNTAwMCIvPjxhOmx1bU9mZiB2YWw9Ijg1MDAwIi8+PC9hOnNjaGVtZUNscj48L2E6c29saWRGaWxsPjxhOnJvdW5kLz48L2E6bG4+PGE6ZWZmZWN0THN0Lz48L2M6c3BQcj48Yzp0eFByPjxhOmJvZHlQci8+PGE6bHN0U3R5bGUvPjxhOnA+PGE6cFByPjxhOmRlZlJQci8+PC9hOnBQcj48YTplbmRQYXJhUlByIGxhbmc9ImVuLVVTIi8+PC9hOnA+PC9jOnR4UHI+PGM6cHJpbnRTZXR0aW5ncz48YzpoZWFkZXJGb290ZXIvPjxjOnBhZ2VNYXJnaW5zIGI9IjAuNzQ4MDMxNDk2MDYyOTkyMTMiIGw9IjAuNzA4NjYxNDE3MzIyODM0NzIiIHI9IjAuNzA4NjYxNDE3MzIyODM0NzIiIHQ9IjAuNzQ4MDMxNDk2MDYyOTkyMTMiIGhlYWRlcj0iMC4zMTQ5NjA2Mjk5MjEyNTk4NCIgZm9vdGVyPSIwLjMxNDk2MDYyOTkyMTI1OTg0Ii8+PGM6cGFnZVNldHVwIG9yaWVudGF0aW9uPSJsYW5kc2NhcGUiLz48L2M6cHJpbnRTZXR0aW5ncz48L2M6Y2hhcnRTcGFjZT4=';
+    const REFERENCE_NATIVE_DRAWING_XML_B64 = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9InllcyI/Pg0KPHhkcjp3c0RyIHhtbG5zOnhkcj0iaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL2RyYXdpbmdtbC8yMDA2L3NwcmVhZHNoZWV0RHJhd2luZyIgeG1sbnM6YT0iaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL2RyYXdpbmdtbC8yMDA2L21haW4iPjx4ZHI6dHdvQ2VsbEFuY2hvcj48eGRyOmZyb20+PHhkcjpjb2w+MTwveGRyOmNvbD48eGRyOmNvbE9mZj4xOTA1MDwveGRyOmNvbE9mZj48eGRyOnJvdz4xNDwveGRyOnJvdz48eGRyOnJvd09mZj4xNzE0NTA8L3hkcjpyb3dPZmY+PC94ZHI6ZnJvbT48eGRyOnRvPjx4ZHI6Y29sPjIyPC94ZHI6Y29sPjx4ZHI6Y29sT2ZmPjk1MjU8L3hkcjpjb2xPZmY+PHhkcjpyb3c+Mzc8L3hkcjpyb3c+PHhkcjpyb3dPZmY+MTcxNDUwPC94ZHI6cm93T2ZmPjwveGRyOnRvPjx4ZHI6Z3JhcGhpY0ZyYW1lIG1hY3JvPSIiPjx4ZHI6bnZHcmFwaGljRnJhbWVQcj48eGRyOmNOdlByIGlkPSIxMDI4IiBuYW1lPSJDaGFydCAyIi8+PHhkcjpjTnZHcmFwaGljRnJhbWVQcj48YTpncmFwaGljRnJhbWVMb2Nrcy8+PC94ZHI6Y052R3JhcGhpY0ZyYW1lUHI+PC94ZHI6bnZHcmFwaGljRnJhbWVQcj48eGRyOnhmcm0+PGE6b2ZmIHg9IjAiIHk9IjAiLz48YTpleHQgY3g9IjAiIGN5PSIwIi8+PC94ZHI6eGZybT48YTpncmFwaGljPjxhOmdyYXBoaWNEYXRhIHVyaT0iaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL2RyYXdpbmdtbC8yMDA2L2NoYXJ0Ij48YzpjaGFydCB4bWxuczpjPSJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvZHJhd2luZ21sLzIwMDYvY2hhcnQiIHhtbG5zOnI9Imh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy9vZmZpY2VEb2N1bWVudC8yMDA2L3JlbGF0aW9uc2hpcHMiIHI6aWQ9InJJZDEiLz48L2E6Z3JhcGhpY0RhdGE+PC9hOmdyYXBoaWM+PC94ZHI6Z3JhcGhpY0ZyYW1lPjx4ZHI6Y2xpZW50RGF0YS8+PC94ZHI6dHdvQ2VsbEFuY2hvcj48L3hkcjp3c0RyPg==';
+    const REFERENCE_NATIVE_DRAWING_RELS_B64 = 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9InllcyI/Pg0KPFJlbGF0aW9uc2hpcHMgeG1sbnM9Imh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy9wYWNrYWdlLzIwMDYvcmVsYXRpb25zaGlwcyI+PFJlbGF0aW9uc2hpcCBJZD0icklkMSIgVHlwZT0iaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL29mZmljZURvY3VtZW50LzIwMDYvcmVsYXRpb25zaGlwcy9jaGFydCIgVGFyZ2V0PSIuLi9jaGFydHMvY2hhcnQxLnhtbCIvPjwvUmVsYXRpb25zaGlwcz4=';
+
+    function base64Utf8ToString(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    function chartNumber(value) {
+        if (value === null || value === undefined) return 0;
+        const n = Number(String(value).replace(/,/g, '').trim());
+        return Number.isFinite(n) ? n : 0;
+    }
+
+    function excelDateSerialFromDisplay(value) {
+        const m = String(value || '').trim().match(
+            /^(\d{2})[.](\d{2})[.](\d{4})$/
+        );
+        if (!m) return null;
+
+        const y = Number(m[3]);
+        const mo = Number(m[2]);
+        const d = Number(m[1]);
+        const utc = Date.UTC(y, mo - 1, d);
+        const excelEpoch = Date.UTC(1899, 11, 30);
+        return (utc - excelEpoch) / 86400000;
+    }
+
+    function chartCacheValues(values, formatCode) {
+        const safe = Array.isArray(values) ? values : [];
+        const points = safe.map((value, index) =>
+            `<c:pt idx="${index}"><c:v>${chartNumber(value)}</c:v></c:pt>`
+        ).join('');
+
+        return `<c:numCache>` +
+            `<c:formatCode>${formatCode}</c:formatCode>` +
+            `<c:ptCount val="${safe.length}"/>` +
+            points +
+            `</c:numCache>`;
+    }
+
+    function chartCategoryCache(values) {
+        const safe = Array.isArray(values) ? values : [];
+        const points = safe.map((value, index) =>
+            `<c:pt idx="${index}"><c:v>${chartNumber(value)}</c:v></c:pt>`
+        ).join('');
+
+        return `<c:numCache>` +
+            `<c:formatCode>m/d/yyyy</c:formatCode>` +
+            `<c:ptCount val="${safe.length}"/>` +
+            points +
+            `</c:numCache>`;
+    }
+
+    function replaceFirstSeriesElement(xml, oldText, newText) {
+        return xml.replace(oldText, newText);
+    }
+
+    function buildNativeExcelChartXml(chartRows) {
+        const rows = Array.isArray(chartRows) ? chartRows : [];
+        const chartNs = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+        const mainNs = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+        const relNs = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+        function esc(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+        }
+
+        function num(value) {
+            const n = Number(value);
+            return Number.isFinite(n) ? String(n) : '0';
+        }
+
+        function cache(values, formatCode) {
+            const safe = Array.isArray(values) ? values : [];
+            return `<c:numCache><c:formatCode>${esc(formatCode)}</c:formatCode><c:ptCount val="${safe.length}"/>` +
+                safe.map((v, i) => `<c:pt idx="${i}"><c:v>${num(v)}</c:v></c:pt>`).join('') +
+                `</c:numCache>`;
+        }
+
+        const lastRow = 6 + rows.length;
+        const categories = rows.map(r => r.dateSerial);
+
+        const series = [
+            { col: 'AC', title: 'Jetty Discharge-Avg', color: 'accent1', values: rows.map(r => r.jetty) },
+            { col: 'AD', title: 'Jetty Discharge (Steel Plant)-Avg', color: 'accent2', values: rows.map(r => r.steel) },
+            { col: 'AE', title: 'Jetty Discharge (Cement Plant)-Avg', color: 'accent3', values: rows.map(r => r.cement) },
+            { col: 'AF', title: 'MBC Discharge-Avg', color: 'accent4', values: rows.map(r => r.mbc) },
+            { col: 'AG', title: 'MV Discharge-Avg', color: 'accent5', values: rows.map(r => r.mv) },
+            { col: 'AH', title: 'Daily Consumption-Avg', color: 'accent6', values: rows.map(r => r.consumption) }
+        ];
+
+        const seriesXml = series.map((cfg, index) => `
+<c:ser>
+<c:idx val="${index}"/><c:order val="${index}"/>
+<c:tx><c:strRef><c:f>'Cargo Satistics'!$${cfg.col}$5</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${esc(cfg.title)}</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:spPr><a:solidFill><a:schemeClr val="${cfg.color}"/></a:solidFill><a:ln><a:schemeClr val="${cfg.color}"/></a:ln></c:spPr>
+<c:invertIfNegative val="0"/>
+<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showLeaderLines val="0"/></c:dLbls>
+<c:cat><c:numRef><c:f>'Cargo Satistics'!$AB$7:$AB$${lastRow}</c:f>${cache(categories, 'm/d/yyyy')}</c:numRef></c:cat>
+<c:val><c:numRef><c:f>'Cargo Satistics'!$${cfg.col}$7:$${cfg.col}$${lastRow}</c:f>${cache(cfg.values, '#,##0')}</c:numRef></c:val>
+</c:ser>`).join('');
+
+        return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="${chartNs}" xmlns:a="${mainNs}" xmlns:r="${relNs}">
+<c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/>
+<c:chart>
+<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1400" b="1"/></a:pPr><a:r><a:rPr lang="en-IN" b="1"/><a:t>Jetty &amp; MV Discharge</a:t></a:r><a:endParaRPr lang="en-IN" b="1"/></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>
+<c:plotArea><c:layout/>
+<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>
+${seriesXml}
+<c:gapWidth val="150"/><c:overlap val="0"/><c:axId val="100001"/><c:axId val="100002"/></c:barChart>
+<c:catAx><c:axId val="100001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="d/m/yyyy" sourceLinked="0"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="100002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx>
+<c:valAx><c:axId val="100002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:title><c:tx><c:rich><a:bodyPr rot="-5400000"/><a:lstStyle/><a:p><a:r><a:t>MT</a:t></a:r></a:p></c:rich></c:tx></c:title><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="100001"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/><c:majorGridlines/></c:valAx>
+</c:plotArea>
+<c:plotVisOnly val="1"/><c:dispBlanksAs val="zero"/>
+<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>
+</c:chart>
+</c:chartSpace>`;
+}
+
+function buildChartRowsFromDailyTable(dailyRowsToWrite) {
+        const rows = Array.isArray(dailyRowsToWrite) ? dailyRowsToWrite : [];
+        return rows.slice(0, 34).map(tr => {
+            const cells = tr.cells || [];
+            return {
+                dateSerial: excelDateSerialFromDisplay(cells[0] ? cells[0].innerText : ''),
+                jetty: chartNumber(cells[1] ? cells[1].innerText : 0),
+                steel: chartNumber(cells[2] ? cells[2].innerText : 0),
+                cement: chartNumber(cells[3] ? cells[3].innerText : 0),
+                mbc: chartNumber(cells[4] ? cells[4].innerText : 0),
+                mv: chartNumber(cells[5] ? cells[5].innerText : 0),
+                consumption: chartNumber(cells[6] ? cells[6].innerText : 0)
+            };
+        }).filter(r => r.dateSerial !== null);
+    }
+
+    async function injectReferenceNativeChart(xlsxBuffer, chartRows) {
+        if (typeof JSZip === 'undefined') {
+            throw new Error('JSZip could not be loaded. Please refresh the page and try again.');
+        }
+
+        const zip = await JSZip.loadAsync(xlsxBuffer);
+        const chartPath = 'xl/charts/chart1.xml';
+        const drawingPath = 'xl/drawings/drawing1.xml';
+        const drawingRelsPath = 'xl/drawings/_rels/drawing1.xml.rels';
+        const contentTypesPath = '[Content_Types].xml';
+        const relNs = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+        const packageRelNs = 'http://schemas.openxmlformats.org/package/2006/relationships';
+        const mainNs = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+        const workbookXml = await zip.file('xl/workbook.xml').async('string');
+        const workbookDoc = new DOMParser().parseFromString(workbookXml, 'application/xml');
+        const cargoSheet = Array.from(
+            workbookDoc.getElementsByTagNameNS(mainNs, 'sheet')
+        ).find(sheet => sheet.getAttribute('name') === 'Cargo Satistics');
+
+        if (!cargoSheet) throw new Error('Cargo Satistics worksheet was not found.');
+
+        const cargoRid = cargoSheet.getAttributeNS(relNs, 'id');
+        const workbookRelsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+        const workbookRelsDoc = new DOMParser().parseFromString(workbookRelsXml, 'application/xml');
+        const sheetRel = Array.from(workbookRelsDoc.documentElement.children || [])
+            .find(rel => rel.getAttribute('Id') === cargoRid);
+
+        if (!sheetRel) throw new Error('Cargo Satistics worksheet relationship was not found.');
+
+        let target = sheetRel.getAttribute('Target') || '';
+        if (target.startsWith('/')) target = target.slice(1);
+        const sheetPath = target.startsWith('xl/') ? target : `xl/${target}`;
+        const sheetFileName = sheetPath.split('/').pop();
+        const sheetDir = sheetPath.substring(0, sheetPath.lastIndexOf('/') + 1);
+        const sheetRelsPath = `${sheetDir}_rels/${sheetFileName}.rels`;
+
+        // Remove all old chart/drawing/media parts.
+        Object.keys(zip.files).forEach(path => {
+            if (
+                path === chartPath ||
+                path === drawingPath ||
+                path === drawingRelsPath ||
+                path.startsWith('xl/media/')
+            ) {
+                zip.remove(path);
+            }
+        });
+
+        // Create a clean native Excel chart using the visible
+        // Daily Port Operations cells AB:AH.
+        zip.file(chartPath, buildNativeExcelChartXml(chartRows));
+
+        // Create the drawing at the same location as the requested graph:
+        // B15:W38.
+        zip.file(drawingPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+          xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+          xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <xdr:twoCellAnchor>
+        <xdr:from><xdr:col>1</xdr:col><xdr:colOff>19050</xdr:colOff><xdr:row>14</xdr:row><xdr:rowOff>171450</xdr:rowOff></xdr:from>
+        <xdr:to><xdr:col>17</xdr:col><xdr:colOff>9525</xdr:colOff><xdr:row>37</xdr:row><xdr:rowOff>171450</xdr:rowOff></xdr:to>
+        <xdr:graphicFrame macro="">
+            <xdr:nvGraphicFramePr>
+                <xdr:cNvPr id="1028" name="Jetty &amp; MV Discharge"/>
+                <xdr:cNvGraphicFramePr><a:graphicFrameLocks/></xdr:cNvGraphicFramePr>
+            </xdr:nvGraphicFramePr>
+            <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+            <a:graphic>
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+                    <c:chart r:id="rId1"/>
+                </a:graphicData>
+            </a:graphic>
+        </xdr:graphicFrame>
+        <xdr:clientData/>
+    </xdr:twoCellAnchor>
+</xdr:wsDr>`);
+
+        zip.file(drawingRelsPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${packageRelNs}">
+    <Relationship Id="rId1"
+        Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+        Target="../charts/chart1.xml"/>
+</Relationships>`);
+
+        // Attach drawing to the actual Cargo Satistics worksheet.
+        const sheetXml = await zip.file(sheetPath).async('string');
+        const sheetDoc = new DOMParser().parseFromString(sheetXml, 'application/xml');
+        const root = sheetDoc.documentElement;
+
+        Array.from(sheetDoc.getElementsByTagNameNS(mainNs, 'drawing'))
+            .forEach(node => node.parentNode.removeChild(node));
+
+        const drawing = sheetDoc.createElementNS(mainNs, 'drawing');
+        drawing.setAttributeNS(relNs, 'r:id', 'rIdChart');
+
+        const legacy = sheetDoc.getElementsByTagNameNS(mainNs, 'legacyDrawing')[0];
+        if (legacy) root.insertBefore(drawing, legacy);
+        else root.appendChild(drawing);
+
+        zip.file(sheetPath, new XMLSerializer().serializeToString(sheetDoc));
+
+        // Rebuild sheet relationships.
+        const sheetRelsXml = zip.file(sheetRelsPath)
+            ? await zip.file(sheetRelsPath).async('string')
+            : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${packageRelNs}"/>`;
+
+        const sheetRelsDoc = new DOMParser().parseFromString(sheetRelsXml, 'application/xml');
+        const relRoot = sheetRelsDoc.documentElement;
+
+        Array.from(relRoot.children || []).forEach(rel => {
+            const type = rel.getAttribute('Type') || '';
+            const targetRel = rel.getAttribute('Target') || '';
+            if (
+                type.endsWith('/drawing') ||
+                targetRel.includes('drawings/drawing')
+            ) {
+                relRoot.removeChild(rel);
+            }
+        });
+
+        const drawingRel = sheetRelsDoc.createElementNS(packageRelNs, 'Relationship');
+        drawingRel.setAttribute('Id', 'rIdChart');
+        drawingRel.setAttribute(
+            'Type',
+            'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing'
+        );
+        drawingRel.setAttribute('Target', '../drawings/drawing1.xml');
+        relRoot.appendChild(drawingRel);
+
+        zip.file(
+            sheetRelsPath,
+            new XMLSerializer().serializeToString(sheetRelsDoc)
+        );
+
+        // Ensure exactly one chart content-type entry.
+        let contentTypes = await zip.file(contentTypesPath).async('string');
+        contentTypes = contentTypes.replace(
+            /<Override[^>]*PartName=["']\/xl\/charts\/chart1\.xml["'][^>]*\/>/gi,
+            ''
+        );
+        contentTypes = contentTypes.replace(
+            '</Types>',
+            '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>'
+        );
+        zip.file(contentTypesPath, contentTypes);
+
+        return await zip.generateAsync({
+            type: 'arraybuffer',
+            compression: 'DEFLATE'
+        });
     }
 
     async function downloadExcelReport() {
@@ -4202,6 +4595,27 @@
             );
 
             // Consumption: headers are O4:R6, body is O7:R13.
+            // Merge the Cargo header vertically across the two header rows
+            // (the blank cell shown above For the Day / MTD / YTD).
+            try {
+                const consumptionMerge = 'O5:O6';
+                const existingMerges = Array.isArray(ws.model && ws.model.merges)
+                    ? ws.model.merges
+                    : [];
+                const hasConsumptionMerge = existingMerges.some(m => m === consumptionMerge);
+                if (!hasConsumptionMerge) {
+                    ws.mergeCells(consumptionMerge);
+                }
+                const cargoHeaderCell = ws.getCell('O5');
+                cargoHeaderCell.value = 'Cargo';
+                cargoHeaderCell.alignment = {
+                    horizontal: 'center',
+                    vertical: 'middle',
+                    wrapText: true
+                };
+            } catch (mergeError) {
+                console.warn('Consumption Cargo header merge:', mergeError);
+            }
             clearExcelRange(ws, 7, 15, 13, 18);
             writeHtmlTableBodyToTemplate(
                 ws,
@@ -4232,8 +4646,22 @@
             // => DO NOT show 04.09.2026.
             const dailySelectedDate = getReportDate(selectedDate);
 
-            // Clear the data area only; keep the reference headers/formatting.
-            clearExcelRange(ws, 7, 28, 40, 34);
+            // Clear EVERY Daily Port Operations data cell first.
+            // This is deliberately the complete AB7:AH40 data area so that
+            // no dates/data left in the reference Excel can survive the
+            // export after the report date.
+            for (let r = 7; r <= 40; r++) {
+                for (let c = 28; c <= 34; c++) {
+                    try {
+                        const cell = ws.getCell(r, c);
+                        // Daily data rows are not merged. Force the value to
+                        // null so future/template dates are always removed.
+                        cell.value = null;
+                    } catch (e) {
+                        // Ignore only a protected merged/subordinate cell.
+                    }
+                }
+            }
 
             // Copy the reference data-row formatting to any additional rows
             // required through the report date. This keeps all report-date
@@ -4257,7 +4685,10 @@
                     if (!m) return false;
 
                     const iso = `${m[3]}-${m[2]}-${m[1]}`;
-                    return !dailySelectedDate || iso <= dailySelectedDate;
+                    // A report date is mandatory for this export section.
+                    // If it cannot be resolved, do not copy any Daily
+                    // Operations rows rather than leaking template dates.
+                    return !!dailySelectedDate && iso <= dailySelectedDate;
                 });
             }
 
@@ -4303,9 +4734,51 @@
                 28,
                 {
                     maxDate: dailySelectedDate,
+                    sameMonth: true,
                     maxRows: dailyRequiredRows
                 }
             );
+
+            // FINAL SAFETY CLEANUP:
+            // Clear every Daily Port Operations row after the valid rows AND
+            // every row whose date is outside the report month or after the
+            // report date. This removes template leftovers such as 28/29.
+            for (let r = 7; r <= 40; r++) {
+                let shouldClear = r >= 7 + dailyRequiredRows;
+
+                if (!shouldClear) {
+                    const raw = ws.getCell(r, 28).value;
+                    let iso = '';
+
+                    if (typeof raw === 'string') {
+                        const m = raw.trim().match(/^(\d{2})[.](\d{2})[.](\d{4})$/);
+                        if (m) iso = `${m[3]}-${m[2]}-${m[1]}`;
+                    } else if (raw instanceof Date && !isNaN(raw.getTime())) {
+                        iso =
+                            raw.getFullYear() + '-' +
+                            String(raw.getMonth() + 1).padStart(2, '0') + '-' +
+                            String(raw.getDate()).padStart(2, '0');
+                    }
+
+                    if (iso && dailySelectedDate) {
+                        const rp = String(dailySelectedDate).split('-').map(Number);
+                        const dp = iso.split('-').map(Number);
+
+                        shouldClear =
+                            iso > dailySelectedDate ||
+                            dp[0] !== rp[0] ||
+                            dp[1] !== rp[1];
+                    }
+                }
+
+                if (shouldClear) {
+                    for (let c = 28; c <= 34; c++) {
+                        try {
+                            ws.getCell(r, c).value = null;
+                        } catch (e) {}
+                    }
+                }
+            }
 
             // Update the Daily Operations header averages without touching
             // the merged/header formatting.
@@ -4321,6 +4794,61 @@
 
             dailyHeadings.forEach(([address, value]) => {
                 setMergedTopLeftValue(ws, address, value);
+            });
+
+            // --------------------------------------------------------
+            // Native Excel chart source block (hidden).
+            // Do NOT use the visible AB:AH table directly because the
+            // reference 3-D chart has its own fixed source-column layout.
+            // The five hidden columns below contain real numeric Excel
+            // values, which is what makes the native chart render in Excel.
+            // --------------------------------------------------------
+            const chartSourceCols = ['AZ', 'BA', 'BB', 'BC', 'BD', 'BE', 'BF'];
+            chartSourceCols.forEach(col => {
+                try {
+                    ws.getColumn(col).hidden = true;
+                } catch (e) {}
+            });
+
+            const chartRows = buildChartRowsFromDailyTable(dailyRowsToWrite);
+            const chartSourceHeaders = {
+                AZ: 'Jetty Discharge-Avg',
+                BA: 'Jetty Discharge (Steel Plant)-Avg',
+                BB: 'Jetty Discharge (Cement Plant)-Avg',
+                BC: 'MBC Discharge-Avg',
+                BD: 'MV Discharge-Avg',
+                BE: 'Daily Consumption-Avg',
+                BF: 'DATE'
+            };
+
+            Object.entries(chartSourceHeaders).forEach(([col, value]) => {
+                const cell = ws.getCell(`${col}5`);
+                cell.value = value;
+            });
+
+            // Clear the complete hidden source area first.
+            for (let r = 7; r <= 40; r++) {
+                chartSourceCols.forEach(col => {
+                    try {
+                        ws.getCell(`${col}${r}`).value = null;
+                    } catch (e) {}
+                });
+            }
+
+            chartRows.forEach((item, index) => {
+                const r = 7 + index;
+                ws.getCell(`AZ${r}`).value = item.jetty;
+                ws.getCell(`BA${r}`).value = item.steel;
+                ws.getCell(`BB${r}`).value = item.cement;
+                ws.getCell(`BC${r}`).value = item.mbc;
+                ws.getCell(`BD${r}`).value = item.mv;
+                ws.getCell(`BE${r}`).value = item.consumption;
+                ws.getCell(`BF${r}`).value = item.dateSerial;
+
+                ['AZ', 'BA', 'BB', 'BC', 'BD', 'BE'].forEach(col => {
+                    ws.getCell(`${col}${r}`).numFmt = '#,##0';
+                });
+                ws.getCell(`BF${r}`).numFmt = 'dd/mm/yyyy';
             });
 
             // PNP: title T15:Y15, headers T16:Y17, body T18:Y24.
@@ -4360,6 +4888,46 @@
             );
 
             // --------------------------------------------------------
+            // EXACT RECEIPT MERGES FROM REFERENCE EXCEL
+            // --------------------------------------------------------
+            const receiptMerges = [
+                'T15:Y15',
+                'T16:T17', 'U16:U17', 'V16:V17', 'T18:T22',
+                'T26:Y26',
+                'T27:T28', 'U27:U28', 'V27:V28',
+                'T29:T31',
+                'T34:Y34',
+                'T35:T36', 'U35:U36', 'V35:V36',
+                'T40:Y40',
+                'T41:T42', 'U41:U42', 'V41:V42',
+                'T43:T53', 'T54:T55'
+            ];
+
+            receiptMerges.forEach(range => {
+                try {
+                    const existing =
+                        ws.model &&
+                        Array.isArray(ws.model.merges) &&
+                        ws.model.merges.includes(range);
+
+                    if (!existing) {
+                        ws.mergeCells(range);
+                    }
+                } catch (e) {
+                    // Keep the template merge if it is already present.
+                }
+            });
+
+            // --------------------------------------------------------
+            // Final Excel data cleanup: convert numeric text to real numbers
+            // and remove decimal places from all numeric cells, including
+            // values already present in the reference workbook.
+            ws.eachRow({ includeEmpty: false }, row => {
+                row.eachCell({ includeEmpty: false }, cell => {
+                    normalizeExcelNumberCell(cell);
+                });
+            });
+
             // Keep the reference workbook's exact widths and row heights.
             // These are deliberately not recalculated from the web tables.
             // --------------------------------------------------------
@@ -4456,64 +5024,10 @@
             });
 
             // --------------------------------------------------------
-            // Replace the reference chart image with the currently rendered
-            // web chart, while retaining the reference chart position.
+            // Native Excel chart is injected into the final XLSX package
+            // after ExcelJS writes the workbook.  Do NOT export the Chart.js
+            // canvas as an image.
             // --------------------------------------------------------
-            const chartCanvas =
-                document.getElementById('jettyMvDischargeChart');
-
-            if (
-                chartCanvas &&
-                typeof chartCanvas.toDataURL === 'function'
-            ) {
-                try {
-                    const imageData =
-                        chartCanvas.toDataURL('image/png', 1.0);
-
-                    // IMPORTANT: remove the reference workbook's old graph
-                    // completely before inserting the current graph.
-                    // Otherwise Excel shows two graphs/axes/legends on top of
-                    // each other, which is what caused the distorted display.
-                    try {
-                        if (typeof ws.getImages === 'function' &&
-                            typeof ws.removeImage === 'function') {
-                            ws.getImages().slice().forEach(image => {
-                                ws.removeImage(image);
-                            });
-                        }
-
-                        // ExcelJS stores worksheet images in _media. Clear it
-                        // as an additional safeguard for template images.
-                        if (Array.isArray(ws._media)) {
-                            ws._media.length = 0;
-                        }
-                    } catch (removeError) {
-                        console.warn(
-                            'Could not fully clear template chart image:',
-                            removeError
-                        );
-                    }
-
-                    const imageId = workbook.addImage({
-                        base64: imageData,
-                        extension: 'png'
-                    });
-
-                    // Graph area in the reference layout is the left-side
-                    // report area only.  Receipt tables start at T, so the
-                    // graph MUST stop at S and must never cover T:Y.
-                    ws.addImage(imageId, {
-                        tl: { col: 1, row: 14 },
-                        br: { col: 18, row: 37 }
-                    });
-                } catch (chartError) {
-                    console.warn(
-                        'Could not replace discharge chart:',
-                        chartError
-                    );
-                }
-            }
-
             // Same print setup as the reference workbook.
             ws.freezePanes = 'B5';
             ws.pageSetup.orientation = 'landscape';
@@ -4532,7 +5046,27 @@
             const fileDate =
                 selectedDate || new Date().toISOString().slice(0, 10);
 
-            const buffer = await workbook.xlsx.writeBuffer();
+            // Remove the standalone template value "28" that appears
+            // directly below the Cargo Statistics title. This cell is not
+            // part of the requested report and must remain blank.
+            try {
+                ws.getCell('F3').value = null;
+            } catch (e) {}
+
+            let buffer = await workbook.xlsx.writeBuffer();
+
+            // Build the native chart source from the exact Daily Port
+            // Operations rows that were exported above.
+            const nativeChartRows = buildChartRowsFromDailyTable(
+                dailyRowsToWrite
+            );
+
+            // Patch the final XLSX with the native chart parts from the
+            // approved reference workbook.
+            buffer = await injectReferenceNativeChart(
+                buffer,
+                nativeChartRows
+            );
 
             const blob = new Blob(
                 [buffer],
