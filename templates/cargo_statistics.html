@@ -399,10 +399,9 @@
         }
 
         .consumption-table .consumption-cargo-head {
-            vertical-align: middle !important;
-            text-align: center !important;
-            font-weight: 400 !important;
-            height: 74px !important;
+            vertical-align: middle;
+            text-align: center;
+            font-weight: 400;
         }
 
         .consumption-table .consumption-unit {
@@ -3043,12 +3042,19 @@
         }
     }
 
+    // Keep the exact Daily Port Operations rows returned by the API.
+    // Excel chart data is built from these rows, not from formatted DOM text.
+    let latestDailyOperationsRows = [];
+
     function renderDailyOperationsTable(result) {
         if (!dailyOperationsBodyEl) return;
 
         const rows = Array.isArray(result?.rows)
             ? result.rows
             : [];
+
+        // Preserve the raw API rows for the Excel export/chart.
+        latestDailyOperationsRows = rows.map(row => ({ ...row }));
 
         if (!rows.length) {
             dailyOperationsBodyEl.innerHTML = `
@@ -4305,12 +4311,12 @@
         const categories = rows.map(r => r.dateSerial);
 
         const series = [
-            { col: 'AC', title: 'Jetty Discharge-Avg', color: 'accent1', values: rows.map(r => r.jetty) },
-            { col: 'AD', title: 'Jetty Discharge (Steel Plant)-Avg', color: 'accent2', values: rows.map(r => r.steel) },
-            { col: 'AE', title: 'Jetty Discharge (Cement Plant)-Avg', color: 'accent3', values: rows.map(r => r.cement) },
-            { col: 'AF', title: 'MBC Discharge-Avg', color: 'accent4', values: rows.map(r => r.mbc) },
-            { col: 'AG', title: 'MV Discharge-Avg', color: 'accent5', values: rows.map(r => r.mv) },
-            { col: 'AH', title: 'Daily Consumption-Avg', color: 'accent6', values: rows.map(r => r.consumption) }
+            { col: 'AZ', title: 'Jetty Discharge-Avg', color: 'accent1', values: rows.map(r => r.jetty) },
+            { col: 'BA', title: 'Jetty Discharge (Steel Plant)-Avg', color: 'accent2', values: rows.map(r => r.steel) },
+            { col: 'BB', title: 'Jetty Discharge (Cement Plant)-Avg', color: 'accent3', values: rows.map(r => r.cement) },
+            { col: 'BC', title: 'MBC Discharge-Avg', color: 'accent4', values: rows.map(r => r.mbc) },
+            { col: 'BD', title: 'MV Discharge-Avg', color: 'accent5', values: rows.map(r => r.mv) },
+            { col: 'BE', title: 'Daily Consumption-Avg', color: 'accent6', values: rows.map(r => r.consumption) }
         ];
 
         const seriesXml = series.map((cfg, index) => `
@@ -4320,7 +4326,7 @@
 <c:spPr><a:solidFill><a:schemeClr val="${cfg.color}"/></a:solidFill><a:ln><a:schemeClr val="${cfg.color}"/></a:ln></c:spPr>
 <c:invertIfNegative val="0"/>
 <c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showLeaderLines val="0"/></c:dLbls>
-<c:cat><c:numRef><c:f>'Cargo Satistics'!$AB$7:$AB$${lastRow}</c:f>${cache(categories, 'm/d/yyyy')}</c:numRef></c:cat>
+<c:cat><c:numRef><c:f>'Cargo Satistics'!$BF$7:$BF$${lastRow}</c:f>${cache(categories, 'm/d/yyyy')}</c:numRef></c:cat>
 <c:val><c:numRef><c:f>'Cargo Satistics'!$${cfg.col}$7:$${cfg.col}$${lastRow}</c:f>${cache(cfg.values, '#,##0')}</c:numRef></c:val>
 </c:ser>`).join('');
 
@@ -4342,7 +4348,30 @@ ${seriesXml}
 </c:chartSpace>`;
 }
 
-function buildChartRowsFromDailyTable(dailyRowsToWrite) {
+function buildChartRowsFromDailyApiRows(sourceRows, reportDate) {
+        const rows = Array.isArray(sourceRows) ? sourceRows : [];
+        return rows.map(row => {
+            const iso = String(row?.date || '').trim().slice(0, 10);
+            return {
+                isoDate: iso,
+                dateSerial: excelDateSerialFromDisplay(
+                    iso ? `${iso.slice(8,10)}.${iso.slice(5,7)}.${iso.slice(0,4)}` : ''
+                ),
+                jetty: chartNumber(row?.jetty_discharge),
+                steel: chartNumber(row?.steel_plant_discharge),
+                cement: chartNumber(row?.cement_plant_discharge),
+                mbc: chartNumber(row?.mbc_discharge),
+                mv: chartNumber(row?.mv_discharge),
+                consumption: chartNumber(row?.daily_consumption)
+            };
+        })
+        .filter(r => r.dateSerial !== null)
+        .filter(r => !reportDate || r.isoDate <= String(reportDate))
+        .sort((a, b) => a.isoDate.localeCompare(b.isoDate))
+        .slice(0, 34);
+    }
+
+    function buildChartRowsFromDailyTable(dailyRowsToWrite) {
         const rows = Array.isArray(dailyRowsToWrite) ? dailyRowsToWrite : [];
         return rows.slice(0, 34).map(tr => {
             const cells = tr.cells || [];
@@ -4412,7 +4441,7 @@ function buildChartRowsFromDailyTable(dailyRowsToWrite) {
         zip.file(chartPath, buildNativeExcelChartXml(chartRows));
 
         // Create the drawing at the same location as the requested graph:
-        // B15:W38.
+        // B15:R38.
         zip.file(drawingPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
           xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -4595,27 +4624,6 @@ function buildChartRowsFromDailyTable(dailyRowsToWrite) {
             );
 
             // Consumption: headers are O4:R6, body is O7:R13.
-            // Merge the Cargo header vertically across the two header rows
-            // (the blank cell shown above For the Day / MTD / YTD).
-            try {
-                const consumptionMerge = 'O5:O6';
-                const existingMerges = Array.isArray(ws.model && ws.model.merges)
-                    ? ws.model.merges
-                    : [];
-                const hasConsumptionMerge = existingMerges.some(m => m === consumptionMerge);
-                if (!hasConsumptionMerge) {
-                    ws.mergeCells(consumptionMerge);
-                }
-                const cargoHeaderCell = ws.getCell('O5');
-                cargoHeaderCell.value = 'Cargo';
-                cargoHeaderCell.alignment = {
-                    horizontal: 'center',
-                    vertical: 'middle',
-                    wrapText: true
-                };
-            } catch (mergeError) {
-                console.warn('Consumption Cargo header merge:', mergeError);
-            }
             clearExcelRange(ws, 7, 15, 13, 18);
             writeHtmlTableBodyToTemplate(
                 ws,
@@ -4810,7 +4818,7 @@ function buildChartRowsFromDailyTable(dailyRowsToWrite) {
                 } catch (e) {}
             });
 
-            const chartRows = buildChartRowsFromDailyTable(dailyRowsToWrite);
+            const chartRows = buildChartRowsFromDailyApiRows(latestDailyOperationsRows, dailySelectedDate);
             const chartSourceHeaders = {
                 AZ: 'Jetty Discharge-Avg',
                 BA: 'Jetty Discharge (Steel Plant)-Avg',
@@ -5057,8 +5065,13 @@ function buildChartRowsFromDailyTable(dailyRowsToWrite) {
 
             // Build the native chart source from the exact Daily Port
             // Operations rows that were exported above.
-            const nativeChartRows = buildChartRowsFromDailyTable(
-                dailyRowsToWrite
+            // Build the chart directly from the exact API rows used by the
+            // Daily Port Operations table. This guarantees that the last
+            // report-date row (including 04.09.2026) is not lost because of
+            // DOM formatting or row filtering.
+            const nativeChartRows = buildChartRowsFromDailyApiRows(
+                latestDailyOperationsRows,
+                dailySelectedDate
             );
 
             // Patch the final XLSX with the native chart parts from the
