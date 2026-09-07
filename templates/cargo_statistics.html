@@ -2800,207 +2800,202 @@
     }
 
     function renderJettyMvDischargeChart(rows) {
-        const canvas = document.getElementById('jettyMvDischargeChart');
-        const errorEl = document.getElementById('dischargeChartError');
+    const canvas = document.getElementById('jettyMvDischargeChart');
+    const errorEl = document.getElementById('dischargeChartError');
 
-        if (!canvas) return;
+    if (!canvas) return;
 
+    if (errorEl) {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+    }
+
+    if (typeof Chart === 'undefined') {
         if (errorEl) {
-            errorEl.style.display = 'none';
-            errorEl.textContent = '';
+            errorEl.textContent =
+                'Unable to load the discharge chart library.';
+            errorEl.style.display = 'flex';
         }
+        return;
+    }
 
-        if (typeof Chart === 'undefined') {
-            if (errorEl) {
-                errorEl.textContent =
-                    'Unable to load the discharge chart library.';
-                errorEl.style.display = 'flex';
-            }
-            return;
-        }
+    // Only plot days that actually have data. Boundary rows where every
+    // metric is 0 (e.g. today's row before entries are made) create
+    // broken/partial bar groups — drop them instead of rendering them.
+    const cleanRows = (Array.isArray(rows) ? rows : []).filter(row => {
+        const jetty = Number(row.jetty_discharge) || 0;
+        const steel = Number(row.steel_plant_discharge) || 0;
+        const mbc = Number(row.mbc_discharge) || 0;
+        const mv = Number(row.mv_discharge) || 0;
+        const consumption = Number(row.daily_consumption) || 0;
+        return jetty || steel || mbc || mv || consumption;
+    });
 
-        const cleanRows = Array.isArray(rows) ? rows : [];
-
-        if (!cleanRows.length) {
-            if (jettyMvDischargeChart) {
-                jettyMvDischargeChart.destroy();
-                jettyMvDischargeChart = null;
-            }
-
-            if (errorEl) {
-                errorEl.textContent = 'No discharge data found.';
-                errorEl.style.display = 'flex';
-            }
-            return;
-        }
-
-        const labels = cleanRows.map(row => formatChartDate(row.date));
-
-        const steel = cleanRows.map(row =>
-            Number(row.steel_plant_discharge) || 0
-        );
-        const consumption = cleanRows.map(row =>
-            Number(row.daily_consumption) || 0
-        );
-        const mv = cleanRows.map(row =>
-            Number(row.mv_discharge) || 0
-        );
-        const mbc = cleanRows.map(row =>
-            Number(row.mbc_discharge) || 0
-        );
-
-        // Draw numeric labels above every non-zero bar, matching the
-        // reference graph style without requiring another plugin.
-        const valueLabelPlugin = {
-            id: 'rp01ValueLabels',
-            afterDatasetsDraw(chart) {
-                const {ctx} = chart;
-
-                ctx.save();
-                ctx.font = '9px Arial';
-                ctx.fillStyle = '#222';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
-
-                chart.data.datasets.forEach((dataset, datasetIndex) => {
-                    const meta = chart.getDatasetMeta(datasetIndex);
-
-                    meta.data.forEach((bar, index) => {
-                        const value = Number(dataset.data[index]) || 0;
-                        if (value <= 0 || !bar || !bar.getProps) return;
-
-                        const props = bar.getProps(
-                            ['x', 'y'],
-                            true
-                        );
-
-                        ctx.save();
-                        ctx.translate(props.x, props.y - 3);
-                        ctx.rotate(-Math.PI / 2);
-                        ctx.fillText(
-                            value.toLocaleString('en-IN', {
-                                maximumFractionDigits: 0
-                            }),
-                            0,
-                            0
-                        );
-                        ctx.restore();
-                    });
-                });
-
-                ctx.restore();
-            }
-        };
-
+    if (!cleanRows.length) {
         if (jettyMvDischargeChart) {
             jettyMvDischargeChart.destroy();
+            jettyMvDischargeChart = null;
         }
 
-        jettyMvDischargeChart = new Chart(canvas.getContext('2d'), {
-            type: 'bar',
-            plugins: [valueLabelPlugin],
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: 'Jetty Discharge (Steel Plant)-Avg',
-                        data: steel,
-                        borderWidth: 1,
-                        categoryPercentage: 0.72,
-                        barPercentage: 0.88
-                    },
-                    {
-                        label: 'Daily Consumption-Avg',
-                        data: consumption,
-                        borderWidth: 1,
-                        categoryPercentage: 0.72,
-                        barPercentage: 0.88
-                    },
-                    {
-                        label: 'MV Discharge-Avg',
-                        data: mv,
-                        borderWidth: 1,
-                        categoryPercentage: 0.72,
-                        barPercentage: 0.88
-                    },
-                    {
-                        label: 'MBC Discharge-Avg',
-                        data: mbc,
-                        borderWidth: 1,
-                        categoryPercentage: 0.72,
-                        barPercentage: 0.88
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                interaction: {
-                    mode: 'index',
-                    intersect: false
-                },
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            boxWidth: 10,
-                            boxHeight: 10,
-                            padding: 10,
-                            font: {
-                                size: 10
-                            }
-                        }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label(context) {
-                                const value =
-                                    Number(context.raw) || 0;
+        if (errorEl) {
+            errorEl.textContent = 'No discharge data found.';
+            errorEl.style.display = 'flex';
+        }
+        return;
+    }
 
-                                return `${context.dataset.label}: ` +
-                                    `${value.toLocaleString('en-IN')} MT`;
-                            }
-                        }
+    const labels = cleanRows.map(row => formatChartDate(row.date));
+
+    const jetty = cleanRows.map(row => Number(row.jetty_discharge) || 0);
+    const steel = cleanRows.map(row => Number(row.steel_plant_discharge) || 0);
+    const mbc = cleanRows.map(row => Number(row.mbc_discharge) || 0);
+    const mv = cleanRows.map(row => Number(row.mv_discharge) || 0);
+    const consumption = cleanRows.map(row => Number(row.daily_consumption) || 0);
+
+    const valueLabelPlugin = {
+        id: 'rp01ValueLabels',
+        afterDatasetsDraw(chart) {
+            const {ctx} = chart;
+
+            ctx.save();
+            ctx.font = '9px Arial';
+            ctx.fillStyle = '#222';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+
+            chart.data.datasets.forEach((dataset, datasetIndex) => {
+                const meta = chart.getDatasetMeta(datasetIndex);
+
+                meta.data.forEach((bar, index) => {
+                    const value = Number(dataset.data[index]) || 0;
+                    if (value <= 0 || !bar || !bar.getProps) return;
+
+                    const props = bar.getProps(['x', 'y'], true);
+
+                    ctx.save();
+                    ctx.translate(props.x, props.y - 3);
+                    ctx.rotate(-Math.PI / 2);
+                    ctx.fillText(
+                        value.toLocaleString('en-IN', {
+                            maximumFractionDigits: 0
+                        }),
+                        0,
+                        0
+                    );
+                    ctx.restore();
+                });
+            });
+
+            ctx.restore();
+        }
+    };
+
+    if (jettyMvDischargeChart) {
+        jettyMvDischargeChart.destroy();
+    }
+
+    jettyMvDischargeChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        plugins: [valueLabelPlugin],
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Jetty Discharge-Avg',
+                    data: jetty,
+                    backgroundColor: '#4a90d9',
+                    borderWidth: 1,
+                    categoryPercentage: 0.72,
+                    barPercentage: 0.88
+                },
+                {
+                    label: 'Jetty Discharge (Steel Plant)-Avg',
+                    data: steel,
+                    backgroundColor: '#ed7d31',
+                    borderWidth: 1,
+                    categoryPercentage: 0.72,
+                    barPercentage: 0.88
+                },
+                {
+                    label: 'MBC Discharge-Avg',
+                    data: mbc,
+                    backgroundColor: '#ffc000',
+                    borderWidth: 1,
+                    categoryPercentage: 0.72,
+                    barPercentage: 0.88
+                },
+                {
+                    label: 'MV Discharge-Avg',
+                    data: mv,
+                    backgroundColor: '#264478',
+                    borderWidth: 1,
+                    categoryPercentage: 0.72,
+                    barPercentage: 0.88
+                },
+                {
+                    label: 'Daily Consumption-Avg',
+                    data: consumption,
+                    backgroundColor: '#70ad47',
+                    borderWidth: 1,
+                    categoryPercentage: 0.72,
+                    barPercentage: 0.88
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        boxWidth: 10,
+                        boxHeight: 10,
+                        padding: 10,
+                        font: { size: 10 }
                     }
                 },
-                scales: {
-                    x: {
-                        stacked: false,
-                        grid: {
-                            display: false
-                        },
-                        ticks: {
-                            autoSkip: false,
-                            maxRotation: 35,
-                            minRotation: 35,
-                            padding: 4,
-                            font: {
-                                size: 9
-                            }
-                        }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        title: {
-                            display: true,
-                            text: 'MT'
-                        },
-                        ticks: {
-                            callback(value) {
-                                return Number(value).toLocaleString(
-                                    'en-IN'
-                                );
-                            }
-                        },
-                        grid: {
-                            color: '#d9d9d9'
+                tooltip: {
+                    callbacks: {
+                        label(context) {
+                            const value = Number(context.raw) || 0;
+                            return `${context.dataset.label}: ` +
+                                `${value.toLocaleString('en-IN')} MT`;
                         }
                     }
                 }
+            },
+            scales: {
+                x: {
+                    stacked: false,
+                    grid: { display: false },
+                    ticks: {
+                        autoSkip: false,
+                        maxRotation: 35,
+                        minRotation: 35,
+                        padding: 4,
+                        font: { size: 9 }
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'MT' },
+                    ticks: {
+                        callback(value) {
+                            return Number(value).toLocaleString('en-IN');
+                        }
+                    },
+                    grid: { color: '#d9d9d9' }
+                }
             }
-        });
-    }
+        }
+    });
+}
 
     async function loadDischargeChart(selectedDate) {
         if (!selectedDate) return;
