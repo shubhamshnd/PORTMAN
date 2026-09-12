@@ -126,6 +126,13 @@ def _fetch_shift_cargo_balance(report_date_str, shift_key):
     if shift_key not in ('A', 'B', 'C'):
         shift_key = 'C'
 
+    shift_time_range = {
+        'A': '06:00 to 14:00',
+        'B': '14:00 to 22:00',
+        'C': '22:00 to 06:00'
+    }.get(shift_key, '')
+    time_label = f" ({shift_time_range})" if shift_time_range else ""
+
     try:
         target_date = datetime.strptime(report_date_str, '%Y-%m-%d').date()
     except Exception:
@@ -140,7 +147,7 @@ def _fetch_shift_cargo_balance(report_date_str, shift_key):
             'entry_date': target_date_str,
             'shift': shift_key,
             'shift_display': f"{shift_key} Shift",
-            'title': f"Cargo Balance at Jetty for {shift_key} Shift",
+            'title': f"Cargo Balance at Jetty for {shift_key} Shift{time_label}",
             'items': [],
             'total_qty': 0,
             'total_balance': 0,
@@ -166,7 +173,7 @@ def _fetch_shift_cargo_balance(report_date_str, shift_key):
             'entry_date': target_date_str,
             'shift': shift_key,
             'shift_display': f"{shift_key} Shift",
-            'title': f"Cargo Balance at Jetty for {shift_key} Shift",
+            'title': f"Cargo Balance at Jetty for {shift_key} Shift{time_label}",
             'items': [],
             'total_qty': 0,
             'total_balance': 0,
@@ -446,14 +453,7 @@ def _fetch_shift_cargo_balance(report_date_str, shift_key):
     grand_total = sum(it['balance'] for it in table_items)
 
     # Build WhatsApp / SMS Text Block
-    shift_time_range = {
-        'A': '06:00 to 14:00',
-        'B': '14:00 to 22:00',
-        'C': '22:00 to 06:00'
-    }.get(shift_key, '')
-    time_label = f" ({shift_time_range})" if shift_time_range else ""
-
-    sms_lines = [f"Cargo Balance at Jetty for {shift_key} Shift{time_label}", ""]
+    sms_lines = [f"Cargo Balance at Jetty for {shift_key} Shift", ""]
     if table_items:
         max_c_len = max(len(it['cargo']) for it in table_items)
         max_c_len = max(max_c_len, 14)
