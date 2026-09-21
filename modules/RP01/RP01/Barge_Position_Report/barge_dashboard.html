@@ -1683,10 +1683,9 @@
         C: { fromHour: 22, fromMin: 0, toHour: 6, toMin: 0, nextDay: true },
     };
 
-    const PORTBIRD_LIST = [
-        "Rajendra Mhatre", "Bhushan Patil", "Vinit Thale", "Kedar Patil",
-        "Siddhesh Patil", "Vrutant Shirke", "Rhitik Adsule", "Nikit Mhatre"
-    ];
+    {% endraw %}
+    const PORTBIRD_LIST = {{ bpo_list | tojson }};
+    {% raw %}
 
     let SHIFT_INCHARGE_LIST = [];
     let CRANE_OPERATOR_LIST = [];

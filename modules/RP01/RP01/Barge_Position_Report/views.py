@@ -765,6 +765,9 @@ def bargeposition():
         "BERTH 12",
     ]
 
+    cur.execute("SELECT name FROM bpo_master ORDER BY name ASC")
+    bpo_list = [r['name'] for r in cur.fetchall()]
+
     cur.close()
     conn.close()
 
@@ -789,7 +792,7 @@ def bargeposition():
         discharging_count=len(discharging),
         occupied_berths=occupied_berths,
         available_berths=max(0, 14 - occupied_berths),
-        
+        bpo_list=bpo_list,
     )
     
 # ── API ROUTES ────────────────────────────────────────────────────────────────
