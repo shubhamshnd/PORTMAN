@@ -126,6 +126,7 @@ from modules.PSM01 import bp as psm01_bp, MODULE_INFO as psm01_info
 from modules.PSMM01 import bp as psmm01_bp, MODULE_INFO as psmm01_info
 from modules.PSOM01 import bp as psom01_bp, MODULE_INFO as psom01_info
 from modules.BPOM01 import bp as bpom01_bp, MODULE_INFO as bpom01_info
+from modules.TGM01 import bp as tgm01_bp, MODULE_INFO as tgm01_info
 
 # Import reports module
 from modules.RP01 import bp as rp01_bp, MODULE_INFO as rp01_info
@@ -190,6 +191,7 @@ register_module(psm01_info['code'], psm01_info['name'], psm01_bp)
 register_module(psmm01_info['code'], psmm01_info['name'], psmm01_bp)
 register_module(psom01_info['code'], psom01_info['name'], psom01_bp)
 register_module(bpom01_info['code'], bpom01_info['name'], bpom01_bp)
+register_module(tgm01_info['code'], tgm01_info['name'], tgm01_bp)
 
 # Register reports module
 register_module(rp01_info['code'], rp01_info['name'], rp01_bp)
