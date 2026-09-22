@@ -768,6 +768,15 @@ def bargeposition():
     cur.execute("SELECT name FROM bpo_master ORDER BY name ASC")
     bpo_list = [r['name'] for r in cur.fetchall()]
 
+    cur.execute("SELECT name FROM conveyor_operator_master ORDER BY name ASC")
+    conveyor_operator_list = [r['name'] for r in cur.fetchall()]
+
+    cur.execute("SELECT name FROM marine_officer_master ORDER BY name ASC")
+    marine_officer_list = [r['name'] for r in cur.fetchall()]
+
+    cur.execute("SELECT name FROM berthing_officer_master ORDER BY name ASC")
+    berthing_officer_list = [r['name'] for r in cur.fetchall()]
+
     cur.close()
     conn.close()
 
@@ -793,6 +802,9 @@ def bargeposition():
         occupied_berths=occupied_berths,
         available_berths=max(0, 14 - occupied_berths),
         bpo_list=bpo_list,
+        conveyor_operator_list=conveyor_operator_list,
+        marine_officer_list=marine_officer_list,
+        berthing_officer_list=berthing_officer_list,
     )
     
 # ── API ROUTES ────────────────────────────────────────────────────────────────
@@ -1334,6 +1346,9 @@ def api_shift_report_save():
         "shift_incharge": "Name",
         "bpo": "Name",
         "crane_operator": "Name",
+        "conveyor_operator": "Name",
+        "marine_officer": "Name",
+        "berthing_officer": "Name",
         "berth_layout": [...],  # Combined with waiting_area
         "notes": [...],
         "wt_r19": {...},
@@ -1364,6 +1379,18 @@ def api_shift_report_save():
         shift_incharge = data.get('shift_incharge', '')
         bpo = data.get('bpo', '')
         crane_operator = data.get('crane_operator', '')
+        conveyor_operator = data.get('conveyor_operator', '')
+        marine_officer = data.get('marine_officer', '')
+        berthing_officer = data.get('berthing_officer', '')
+        
+        # Pack BPO and other officers into JSON string for bpo column
+        bpo_dict = {
+            'bpo': bpo,
+            'conveyor_operator': conveyor_operator,
+            'marine_officer': marine_officer,
+            'berthing_officer': berthing_officer
+        }
+        bpo_json_str = _json.dumps(bpo_dict)
         
         # Separate berth_layout and waiting_area
         all_layout = data.get('berth_layout', [])
@@ -1418,7 +1445,7 @@ def api_shift_report_save():
                 movement_logs    = EXCLUDED.movement_logs,
                 updated_at       = NOW()
         """, (
-            report_date, shift, shift_incharge, bpo, crane_operator,
+            report_date, shift, shift_incharge, bpo_json_str, crane_operator,
             berth_layout_json, waiting_area_json,
             wt_r19_json, mbc_eta_json, eta_to_dharamtar_json,
             on_the_way_gull_json, shift_plan_json,
@@ -1505,7 +1532,8 @@ def api_shift_report_load():
         cur.execute("""
             SELECT
                 report_date, shift, berth_layout, waiting_area,
-                shift_incharge, bpo, crane_operator, notes,
+                shift_incharge, bpo, crane_operator,
+                notes,
                 wt_r19, mbc_eta, eta_to_dharamtar, on_the_way_gull,
                 movement_logs, shift_plan, updated_at
             FROM barge_position_report
@@ -1529,6 +1557,9 @@ def api_shift_report_load():
         shift_incharge_out = ""
         bpo_out = ""
         crane_operator_out = ""
+        conveyor_operator_out = ""
+        marine_officer_out = ""
+        berthing_officer_out = ""
         movement_logs_out = []
         berth_updated_at = None
 
@@ -1732,11 +1763,23 @@ def api_shift_report_load():
         merged_shift_incharge = ""
         merged_bpo = ""
         merged_crane_operator = ""
+        merged_conveyor_operator = ""
+        merged_marine_officer = ""
+        merged_berthing_officer = ""
 
         if exact_row:
             merged_shift_incharge = exact_row.get("shift_incharge", "") or ""
-            merged_bpo = exact_row.get("bpo", "") or ""
             merged_crane_operator = exact_row.get("crane_operator", "") or ""
+            
+            bpo_raw = exact_row.get("bpo", "") or ""
+            try:
+                bpo_dict = _json.loads(bpo_raw)
+                merged_bpo = bpo_dict.get('bpo', '')
+                merged_conveyor_operator = bpo_dict.get('conveyor_operator', '')
+                merged_marine_officer = bpo_dict.get('marine_officer', '')
+                merged_berthing_officer = bpo_dict.get('berthing_officer', '')
+            except Exception:
+                merged_bpo = bpo_raw
     
         result = {
             'found': found,
@@ -1745,6 +1788,9 @@ def api_shift_report_load():
             'shift_incharge': merged_shift_incharge,
             'bpo': merged_bpo,
             'crane_operator': merged_crane_operator,
+            'conveyor_operator': merged_conveyor_operator,
+            'marine_officer': merged_marine_officer,
+            'berthing_officer': merged_berthing_officer,
             'berth_layout': berth_layout_out,
             'notes': merged_notes,
             'wt_r19': merged_wt_r19,

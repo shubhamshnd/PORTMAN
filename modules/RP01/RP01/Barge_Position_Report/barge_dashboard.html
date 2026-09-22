@@ -1164,6 +1164,21 @@
             <input type="text" id="shiftIportName" readonly placeholder="Click to select…"
                 onclick="openMultiPicker('shiftIportName', () => CRANE_OPERATOR_LIST)">
         </div>
+        <div class="meta-field-group">
+            <label>Conveyor Operator</label>
+            <input type="text" id="shiftConveyorOperator" readonly placeholder="Click to select…"
+                onclick="openMultiPicker('shiftConveyorOperator', () => CONVEYOR_OPERATOR_LIST)">
+        </div>
+        <div class="meta-field-group">
+            <label>Marine Officer</label>
+            <input type="text" id="shiftMarineOfficer" readonly placeholder="Click to select…"
+                onclick="openMultiPicker('shiftMarineOfficer', () => MARINE_OFFICER_LIST)">
+        </div>
+        <div class="meta-field-group">
+            <label>Berthing Officer</label>
+            <input type="text" id="shiftBerthingOfficer" readonly placeholder="Click to select…"
+                onclick="openMultiPicker('shiftBerthingOfficer', () => BERTHING_OFFICER_LIST)">
+        </div>
     </div>
 
     <!-- Metrics ribbon -->
@@ -1685,6 +1700,9 @@
 
     {% endraw %}
     const PORTBIRD_LIST = {{ bpo_list | tojson }};
+    const CONVEYOR_OPERATOR_LIST = {{ conveyor_operator_list | default([]) | tojson }};
+    const MARINE_OFFICER_LIST = {{ marine_officer_list | default([]) | tojson }};
+    const BERTHING_OFFICER_LIST = {{ berthing_officer_list | default([]) | tojson }};
     {% raw %}
 
     let SHIFT_INCHARGE_LIST = [];
@@ -2002,6 +2020,9 @@
                 shift_incharge: document.getElementById('shiftInchargeName').value || '',
                 bpo: document.getElementById('shiftBpoName').value || '',
                 crane_operator: document.getElementById('shiftIportName').value || '',
+                conveyor_operator: document.getElementById('shiftConveyorOperator').value || '',
+                marine_officer: document.getElementById('shiftMarineOfficer').value || '',
+                berthing_officer: document.getElementById('shiftBerthingOfficer').value || '',
                 berth_layout: [...berthLayout, ...waitingItems, ...wr19Items],
                 wt_r19: wtR19,
                 eta_to_dharamtar: etaToDharamtar,
@@ -2126,6 +2147,12 @@
 
         document.getElementById('shiftIportName').value =
             savedData.crane_operator || "";
+        document.getElementById('shiftConveyorOperator').value =
+            savedData.conveyor_operator || "";
+        document.getElementById('shiftMarineOfficer').value =
+            savedData.marine_officer || "";
+        document.getElementById('shiftBerthingOfficer').value =
+            savedData.berthing_officer || "";
 
 
         // Backend now guarantees the waiting-area portion of berth_layout is
