@@ -821,39 +821,34 @@ def _write_summary_sheet(ws, rows):
         ]
         
         row_fill = None
-
-        if row.get('completed_discharge_berth'):
+        
+        _UI_COLORS = {
+            'completed_discharge': 'C6EFCE',
+            'under_discharge':     'FFE699',
+            'loaded_waiting':      'BDD7EE',
+            'currently_loading':   'D9D2E9',
+            'loaded_transit':      '9FC5E8',
+            'waiting_discharge':   'F9CB9C',
+            'on_way_dharamtar':    'F6B26B',
+            'waiting_gull':        'F4CCCC',
+            'waiting_castoff':     'C6EFCE'
+        }
+        
+        status = row.get('current_status')
+        hex_c = _UI_COLORS.get(status)
+        
+        # Fallback if no current_status is present
+        if not hex_c:
+            if row.get('completed_discharge_berth'): hex_c = 'C6EFCE'
+            elif row.get('commence_discharge_berth'): hex_c = 'FFE699'
+            elif row.get('completed_loading'): hex_c = '9FC5E8'
+            elif row.get('commenced_loading'): hex_c = 'D9D2E9'
+            elif row.get('trip_start'): hex_c = 'F9CB9C'
+            
+        if hex_c:
             row_fill = PatternFill(
-                start_color='C6EFCE',
-                end_color='C6EFCE',
-                fill_type='solid'
-            )
-
-        elif row.get('commence_discharge_berth'):
-            row_fill = PatternFill(
-                start_color='FFE699',
-                end_color='FFE699',
-                fill_type='solid'
-            )
-
-        elif row.get('completed_loading'):
-            row_fill = PatternFill(
-                start_color='BDD7EE',
-                end_color='BDD7EE',
-                fill_type='solid'
-            )
-
-        elif row.get('commenced_loading'):
-            row_fill = PatternFill(
-                start_color='D9D2E9',
-                end_color='D9D2E9',
-                fill_type='solid'
-            )
-
-        elif row.get('trip_start'):
-            row_fill = PatternFill(
-                start_color='FFF2CC',
-                end_color='FFF2CC',
+                start_color=hex_c,
+                end_color=hex_c,
                 fill_type='solid'
             )
         
@@ -1051,7 +1046,8 @@ def _write_mbc_sheet(ws, rows):
         'completed_discharge': 'C6EFCE',
         'waiting_castoff':     'C6EFCE',
         'under_discharge':     'FFE699',
-        'waiting_gull':        'FFE599',
+        'loaded_waiting':      'BDD7EE',
+        'waiting_gull':        'F4CCCC',
         'on_way_dharamtar':    'F6B26B',
         'waiting_discharge':   'F9CB9C',
         'loaded_transit':      '9FC5E8',
@@ -1657,6 +1653,21 @@ def mv_barge_report_download_all():
 
         if status_filter == 'all' or status == status_filter:
             filtered_rows.append(row)
+
+    status_order = {
+        'currently_loading': 1,
+        'loaded_transit': 2,
+        'waiting_discharge': 3,
+        'under_discharge': 4,
+        'completed_discharge': 5
+    }
+
+    filtered_rows.sort(
+        key=lambda x: (
+            status_order.get(x.get('current_status'), 999),
+            x.get('barge_name', '')
+        )
+    )
 
     barge_rows = filtered_rows
 
