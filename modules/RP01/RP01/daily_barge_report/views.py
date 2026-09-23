@@ -1549,6 +1549,9 @@ def mv_barge_report_data():
 
 def get_mbc_status(row):
 
+    if row.get('operation_type') == 'Export' and row.get('sailed_out_load_port'):
+        return 'completed'
+
     # Currently Loading: loading_commenced exists, loading_completed does NOT
     if row.get('commenced_loading') and not row.get('completed_loading'):
         return 'currently_loading'
@@ -1782,6 +1785,12 @@ def mv_barge_report_download_all():
             continue
         if co and co < from_dt:
             continue
+
+        if row.get('operation_type') == 'Export':
+            sl = safe_dt(row.get('sailed_out_load_port'))
+            if sl and sl < from_dt:
+                continue
+
         status = get_mbc_status(row)
         if status is None:
             continue
@@ -2061,6 +2070,11 @@ def get_mbc_data():
 
         if mbc_cast_off and mbc_cast_off < from_dt:
             continue
+
+        if row.get('operation_type') == 'Export':
+            sl = safe_dt(row.get('sailed_out_load_port'))
+            if sl and sl < from_dt:
+                continue
 
         # ── Status determination ────────────────────────────────────────────
         status = get_mbc_status(row)
