@@ -42,3 +42,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS rp02_cargo_handling_backdated")
+
+
