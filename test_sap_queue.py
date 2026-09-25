@@ -60,6 +60,21 @@ def run():
     finally:
         _cleanup(qid)
 
+    # A timed-out post that SAP actually booked (callback stamped a doc no.)
+    # must be marked sent without a second SAP post.
+    calls = []
+    sap_client.post_invoice_to_sap = lambda *a, **k: calls.append(1) or {'ok': True}
+    sap_queue._already_in_sap = lambda row: 'CALLBACKDOC'
+    qid = sap_queue.enqueue('post', 'Invoice', 0, 'SELFCHECK2', {'x': 1}, invoice_id=None)
+    try:
+        sap_queue.process_sap_queue()
+        r = _row(qid)
+        assert not calls, 'reposted an invoice already in SAP'
+        assert r['status'] == 'sent' and r['sap_document_number'] == 'CALLBACKDOC', r
+        print('PASS: already-in-SAP retry skipped')
+    finally:
+        _cleanup(qid)
+
 
 def _due_now(qid):
     conn = get_db(); cur = get_cursor(conn)
