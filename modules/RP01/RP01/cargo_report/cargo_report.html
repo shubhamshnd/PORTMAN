@@ -3,6 +3,9 @@
 {% block title %}Cargo Handling - {{ module_code|default('RP01') }}{% endblock %}
 
 {% block head %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <!-- WebDataRocks pivot table -->
 <link href="https://cdn.webdatarocks.com/latest/webdatarocks.min.css" rel="stylesheet">
 <script src="https://cdn.webdatarocks.com/latest/webdatarocks.toolbar.min.js"></script>
@@ -884,26 +887,6 @@ $(document).ready(function () {
     });
 
     function validateDates(fromDate, toDate) {
-
-        const cutoffDate = '2026-05-01';
-
-        if (fromDate && fromDate < cutoffDate) {
-
-            Swal.fire({
-                icon: 'warning',
-                title: 'Report Not Available',
-                html: `
-                <b>Cutoff Date:</b> 01-May-2026<br><br>
-                Reports before this date are not available.
-            `,
-                confirmButtonText: 'OK',
-                confirmButtonColor: '#4a90d9',
-                iconColor: '#44B5E6'
-            });
-
-            return false;
-        }
-
         if (!fromDate) {
             alert('From Date is required');
             return false;

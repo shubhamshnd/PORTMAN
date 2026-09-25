@@ -1,6 +1,6 @@
 import re
 from functools import wraps
-from flask import render_template, request, jsonify, session, redirect, url_for, Response
+from flask import render_template, request, jsonify, session, redirect, url_for, Response, make_response
 
 from database import get_user_permissions
 from . import bp
@@ -678,12 +678,16 @@ def revenue_backdated_index():
 @bp.route('/module/RP02/cargo-report/')
 @login_required
 def cargo_report_rp02():
-    return render_template(
+    resp = make_response(render_template(
         'cargo_report/cargo_report.html',
         username=session.get('username'),
         module_code='RP02',
         module_href='/module/RP02/'
-    )
+    ))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @bp.route('/api/module/RP02/revenue-backdated/template')

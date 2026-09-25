@@ -1,16 +1,29 @@
 from flask import (
     render_template, request, session,
     redirect, url_for, Response,
-    jsonify, send_file
+    jsonify, send_file, make_response
 )
 from functools import wraps
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, date
 import io
 import json
 import re 
 from .. import bp
 from database import get_db, get_cursor
+
+def _format_dt_for_excel(val):
+    if not val:
+        return ''
+    s = str(val).replace('\r', '').replace('\n', '').strip()
+    if s.lower() == 'inprogress':
+        return 'InProgress'
+    if isinstance(val, datetime):
+        return val.strftime('%d/%m/%Y %H:%M')
+    try:
+        return datetime.fromisoformat(s).strftime('%d/%m/%Y %H:%M')
+    except Exception:
+        return s
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -51,12 +64,16 @@ def login_required(f):
 @bp.route('/module/RP01/cargo-report/')
 @login_required
 def cargo_report_index():
-    return render_template(
+    resp = make_response(render_template(
         'cargo_report/cargo_report.html',
         username=session.get('username'),
         module_code='RP01',
         module_href='/module/RP01/'
-    )
+    ))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 # =========================================================
@@ -210,16 +227,14 @@ def get_cargo_report():
         MBC DATE FILTER
 
         STRICT CUTOFF:
-        Do NOT show anything before 01-May-2026.
-
-        This prevents old April MBCs that are still InProgress
-        from appearing.
+        Do NOT show live records before 01-Jul-2026.
+        Historical data (April-June 2026) comes from backdated table.
         ============================================================
         */
 
         WHERE dp.unloading_commenced IS NOT NULL
 
-          AND dp.unloading_commenced >= DATE '2026-05-01'
+          AND dp.unloading_commenced >= DATE '2026-07-01'
 
           AND (
                 (
@@ -432,13 +447,14 @@ def get_cargo_report():
         MV DATE FILTER
 
         STRICT CUTOFF:
-        Do NOT show MV started before 01-May-2026.
+        Do NOT show live MV started before 01-Jul-2026.
+        Historical data (April-June 2026) comes from backdated table.
         ============================================================
         */
 
         WHERE la.first_discharge_started IS NOT NULL
 
-          AND la.first_discharge_started >= DATE '2026-05-01'
+          AND la.first_discharge_started >= DATE '2026-07-01'
 
           AND (
                 (
@@ -633,6 +649,14 @@ def get_cargo_report():
                     row['status'] or '-',
             })
 
+        # Seamlessly merge backdated historical rows (1 April 2026 to 30 June 2026)
+        try:
+            from modules.RP02.cargo_handling import get_backdated_cargo_rows
+            bd_rows = get_backdated_cargo_rows(from_date, to_date)
+            if bd_rows:
+                data.extend(bd_rows)
+        except Exception as bd_err:
+            print('Error fetching backdated cargo rows:', bd_err)
 
         return jsonify({
             'success': True,
@@ -914,7 +938,7 @@ def download_cargo_handling_report():
 
         WHERE dp.unloading_commenced IS NOT NULL
 
-          AND dp.unloading_commenced >= DATE '2026-05-01'
+          AND dp.unloading_commenced >= DATE '2026-07-01'
 
           AND (
 
@@ -1221,7 +1245,7 @@ def download_cargo_handling_report():
 
         WHERE la.first_discharge_started IS NOT NULL
 
-          AND la.first_discharge_started >= DATE '2026-05-01'
+          AND la.first_discharge_started >= DATE '2026-07-01'
 
           AND (
 
@@ -1323,7 +1347,16 @@ def download_cargo_handling_report():
         )
 
 
-        rows = cur.fetchall()
+        rows = list(cur.fetchall() or [])
+
+        # Seamlessly merge backdated historical rows (1 April 2026 to 30 June 2026)
+        try:
+            from modules.RP02.cargo_handling import get_backdated_cargo_rows
+            bd_rows = get_backdated_cargo_rows(from_date, to_date)
+            if bd_rows:
+                rows.extend(bd_rows)
+        except Exception as bd_err:
+            print('Error fetching backdated cargo rows for download:', bd_err)
 
 
 
@@ -1668,41 +1701,9 @@ def download_cargo_handling_report():
                 row['load_port'] or '',
 
 
-                (
-                    datetime.fromisoformat(
-                        str(
-                            row['discharge_commenced']
-                        )
-                    ).strftime(
-                        '%d/%m/%Y %H:%M'
-                    )
-                    if row['discharge_commenced']
-                    else ''
-                ),
+                _format_dt_for_excel(row.get('discharge_commenced')),
 
-
-                (
-                    'InProgress'
-
-                    if str(
-                        row['discharge_completed']
-                    ).strip() == 'InProgress'
-
-                    else datetime.fromisoformat(
-                        str(
-                            row['discharge_completed']
-                        )
-                        .replace('\r', '')
-                        .replace('\n', '')
-                        .strip()
-                    ).strftime(
-                        '%d/%m/%Y %H:%M'
-                    )
-
-                    if row['discharge_completed']
-
-                    else ''
-                ),
+                _format_dt_for_excel(row.get('discharge_completed')),
 
 
                 row['consignee'] or '',
