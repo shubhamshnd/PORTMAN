@@ -930,93 +930,212 @@ def monthly_cargo_report():
             del vessel["discharge_completed_dt"]
             del vessel["ldud_id"]
 
-        # ==================================================================
-        # TOTAL MV = Cargo Quantity from ldud_anchorage
-        # Report Window : Previous Day 08:00 -> Selected Day 08:00
+               # ==================================================================
+        # TOTAL MV
+        # Source: ldud_vessel_operations
+        #
+        # The Date / Day shown in the report is used directly.
+        #
+        # Example:
+        #   08-09-2026 -> quantity from 08-09-2026
+        #   09-09-2026 -> quantity from 09-09-2026
+        #
+        # start_time is TEXT, therefore it is converted to timestamp.
         # ==================================================================
 
         mv_map = {}
 
-        # Get all dates shown in the report
+        # Get all dates displayed in the report
         report_days = sorted({
-            datetime.strptime(day["date_day"], "%d-%m-%Y").date()
+            datetime.strptime(
+                day["date_day"],
+                "%d-%m-%Y"
+            ).date()
             for vessel in report_data.values()
             for day in vessel["daily_data"]
         })
 
+        print("\n========== FETCHING TOTAL MV ==========")
+        print("REPORT DAYS:", report_days)
+
         for report_day in report_days:
 
+            # Exact calendar date
             day_start = datetime.combine(
-                report_day - timedelta(days=1),
-                datetime.min.time()
-            ).replace(hour=8)
-
-            day_end = datetime.combine(
                 report_day,
                 datetime.min.time()
-            ).replace(hour=8)
+            )
+
+            day_end = day_start + timedelta(days=1)
+
+            print("\n----------------------------------------")
+            print("TOTAL MV DATE:", report_day)
+            print("DAY START:", day_start)
+            print("DAY END:", day_end)
+
+            # ==============================================================
+            # Fetch Total MV from ldud_vessel_operations
+            #
+            # start_time is TEXT.
+            #
+            # LEFT 5 characters after date gives:
+            #   YYYY-MM-DD
+            #
+            # We compare the DATE portion directly.
+            #
+            # This avoids timestamp-format problems and works for:
+            #   2026-05-27T00:00
+            #   2026-05-27T00:00:00
+            #   2026-05-27 00:00
+            # ==============================================================
 
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(cargo_quantity),0) AS total_mv
-                FROM ldud_anchorage
-                WHERE discharge_started >= %s
-                AND discharge_started < %s
-            """, (day_start, day_end))
+                    COALESCE(SUM(quantity), 0) AS total_mv
+                FROM ldud_vessel_operations
+                WHERE NULLIF(TRIM(start_time), '') IS NOT NULL
+                  AND TRIM(start_time)::date = %s
+            """, (
+                report_day,
+            ))
 
             result = cur.fetchone()
 
-            mv_map[report_day.strftime("%d-%m-%Y")] = float(result["total_mv"] or 0)
+            total_mv = float(
+                result["total_mv"] or 0
+            )
 
-        print("TOTAL MV MAP:", mv_map)
+            date_key = report_day.strftime("%d-%m-%Y")
+
+            mv_map[date_key] = total_mv
+
+            print(
+                "TOTAL MV FROM ldud_vessel_operations:",
+                date_key,
+                "=>",
+                total_mv
+            )
+
+        print("\n========== TOTAL MV MAP ==========")
+        print(mv_map)
+
+        # ==================================================================
+        # Assign Total MV to each daily row
+        # ==================================================================
 
         for vessel in report_data.values():
+
             for day in vessel["daily_data"]:
-                day["total_mv"] = mv_map.get(day["date_day"], 0)
+
+                date_key = day["date_day"]
+
+                day["total_mv"] = mv_map.get(
+                    date_key,
+                    0
+                )
+
+                print(
+                    "DATE:",
+                    date_key,
+                    "| TOTAL MV:",
+                    day["total_mv"]
+                )
+
+        # ==================================================================
+        # SORT FINAL DATA
+        # ==================================================================
 
         final_data = sorted(
             report_data.values(),
             key=lambda x: x["vessel_seq"]
         )
 
+        # Sort daily data by date and cargo
         for item in final_data:
+
             item["daily_data"].sort(
                 key=lambda d: (
-                    datetime.strptime(d["date_day"], "%d-%m-%Y"),
+                    datetime.strptime(
+                        d["date_day"],
+                        "%d-%m-%Y"
+                    ),
                     d["cargo_name"]
                 )
             )
 
-        print("\nFINAL DATA COUNT:", len(final_data))
+        # ==================================================================
+        # FINAL DEBUG OUTPUT
+        # ==================================================================
+
+        print(
+            "\nFINAL DATA COUNT:",
+            len(final_data)
+        )
+
         for item in final_data:
+
             print(
                 f"[seq={item['vessel_seq']}]"
                 f"[sort_order={item['sort_order']}]"
                 f"[discharge_completed={item['discharge_completed']}]",
                 item['vessel_name'],
                 item['cargo_name'],
-                "BL:", item['bl_quantity'],
-                "Discharged:", item['discharged_quantity'],
-                "Balance:", item['balance_on_board'],
-                "WW Total:", item['ww_hrs_total'],
-                "Avg Rate:", item['avg_discharge_rate']
+                "BL:",
+                item['bl_quantity'],
+                "Discharged:",
+                item['discharged_quantity'],
+                "Balance:",
+                item['balance_on_board'],
+                "WW Total:",
+                item['ww_hrs_total'],
+                "Avg Rate:",
+                item['avg_discharge_rate']
             )
+
             for d in item['daily_data']:
-                print("   ", d['date_day'], "qty:", d['total_qty'], "ww_hrs:", d['ww_hrs'], "total_mv:", d['total_mv'])
 
-        print("\n========== MONTHLY REPORT END ==========\n")
+                print(
+                    "   ",
+                    d['date_day'],
+                    "qty:",
+                    d['total_qty'],
+                    "ww_hrs:",
+                    d['ww_hrs'],
+                    "total_mv:",
+                    d['total_mv']
+                )
 
-        return jsonify({"success": True, "data": final_data})
+        print(
+            "\n========== MONTHLY REPORT END ==========\n"
+        )
+
+        return jsonify({
+            "success": True,
+            "data": final_data
+        })
 
     except Exception as e:
+
         import traceback
         traceback.print_exc()
-        print("\n========== MONTHLY REPORT ERROR ==========")
+
+        print(
+            "\n========== MONTHLY REPORT ERROR =========="
+        )
+
         print(str(e))
-        print("========== ERROR END ==========\n")
-        return jsonify({"success": False, "message": str(e)})
+
+        print(
+            "========== ERROR END ==========\n"
+        )
+
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        })
 
     finally:
+
         cur.close()
         conn.close()
 @bp.route(
@@ -1498,9 +1617,9 @@ def barge_status_report():
                
 
                 # Logic not implemented yet
-                "r19_waiting_loaded": "NA",
+                "r19_waiting_loaded": "",
                 # "transit_mv_to_jetty_loaded": "NA",
-                "empty_at_gull_r19": "NA",
+                "empty_at_gull_r19": "",
                 "in_transit_jetty_to_mv": [],
                 "breakdown": [],
             }
@@ -4639,6 +4758,10 @@ def daily_progress_report_excel():
         window_start = window_end - timedelta(hours=24)
         month_start = report_dt.replace(day=1).date()
 
+        # Excel should show data only up to the day BEFORE
+        # the selected report date, same as the UI.
+        data_end_date = report_dt.date() - timedelta(days=1)
+
         # =====================================================
         # STYLES — matched cell-by-cell against the reference
         # workbook (see header comment above for the mapping).
@@ -4844,18 +4967,13 @@ def daily_progress_report_excel():
         # ---------------- TOTAL DISCHARGE PER DAY (matches monthly_cargo_report) ----------------
         cur.execute("""
             SELECT
-                report_day,
-                COALESCE(SUM(cargo_quantity), 0) AS total_mv
-            FROM (
-                SELECT
-                    DATE(discharge_started + INTERVAL '16 hours') AS report_day,
-                    cargo_quantity
-                FROM ldud_anchorage
-                WHERE discharge_started IS NOT NULL
-                AND cargo_quantity IS NOT NULL
-            ) x
-            GROUP BY report_day
-            ORDER BY report_day
+                TRIM(start_time)::date AS report_day,
+                COALESCE(SUM(quantity), 0) AS total_mv
+            FROM ldud_vessel_operations
+            WHERE NULLIF(TRIM(start_time), '') IS NOT NULL
+            AND quantity IS NOT NULL
+            GROUP BY TRIM(start_time)::date
+            ORDER BY TRIM(start_time)::date
         """)
 
         day_total_map = {
@@ -4864,16 +4982,21 @@ def daily_progress_report_excel():
         }
 
         def total_mv_for(dt_value):
-            """Look up Total MV for the date a timestamp/text value falls on."""
+            """Look up Total MV from ldud_vessel_operations for the date."""
             if not dt_value:
                 return ''
+
             if hasattr(dt_value, 'strftime'):
                 day_key = dt_value.strftime('%d-%m-%Y')
             else:
-                day_key = _parse_flexible(str(dt_value), '%d-%m-%Y')
-            val = day_total_map.get(day_key)
-            return val if val is not None else ''
+                day_key = _parse_flexible(
+                    str(dt_value),
+                    '%d-%m-%Y'
+                )
 
+            val = day_total_map.get(day_key)
+
+            return val if val is not None else ''
         # =====================================================
         # W/W HRS DEDUCTIONS: Mother Vessel Agent / Force Majeure / MBP
         # Same logic as monthly_cargo_report — ldud_delays has no FK
@@ -5055,7 +5178,13 @@ LEFT JOIN ldud_vessel_operations lco
         daily_by_vessel = {v['id']: {} for v in vessels}
 
         if vessel_ids:
-            cur.execute(daily_query, (report_date, vessel_ids))
+            cur.execute(
+                daily_query,
+                (
+                    data_end_date.strftime('%Y-%m-%d'),
+                    vessel_ids
+                )
+            )
             for r in cur.fetchall():
                 if not r['day_label']:
                     continue
@@ -5126,50 +5255,189 @@ LEFT JOIN ldud_vessel_operations lco
             data(matrix_row, 2, day_total_map.get(day, 0))
             matrix_row += 1
 
-        # TOTAL row
-        caption(matrix_row, 2, 'TOTAL', font=header_font)
+        # =====================================================
+        # TOTAL ROW
+        # =====================================================
+
+        # IMPORTANT:
+        # Column B (Total MV Disch) must remain BLANK.
+        # TOTAL is shown only under each vessel.
+
+        caption(
+            matrix_row,
+            2,
+            '',
+            font=header_font
+        )
+
         for v in vessels:
+
             c = vessel_col_map[v['id']]
-            header(matrix_row, c, 'TOTAL')
-            data(matrix_row, c + 1, vessel_totals[v['id']])
+
+            # TOTAL under vessel
+            header(
+                matrix_row,
+                c,
+                'TOTAL'
+            )
+
+            # Total quantity for vessel
+            data(
+                matrix_row,
+                c + 1,
+                vessel_totals[v['id']]
+            )
+
+            # Total W/W hours
             total_ww = vessel_ww_totals[v['id']]
-            data(matrix_row, c + 2, format_hrs_to_hms(total_ww) if total_ww > 0 else '')
+
+            data(
+                matrix_row,
+                c + 2,
+                format_hrs_to_hms(total_ww)
+                if total_ww > 0
+                else ''
+            )
+
         matrix_row += 1
 
-        # BALANCE ON BOARD row
-        caption(matrix_row, 2, 'Balance on Board', font=header_font)
+
+        # =====================================================
+        # BALANCE ON BOARD
+        # =====================================================
+
+        # Keep column B BLANK
+        caption(
+            matrix_row,
+            2,
+            '',
+            font=header_font
+        )
+
         for v in vessels:
+
             c = vessel_col_map[v['id']]
-            bl_qty = float(v['bl_quantity'] or 0)
-            balance = max(bl_qty - vessel_totals[v['id']], 0)
-            header(matrix_row, c, 'Balance on Board')
-            data(matrix_row, c + 1, balance)
-            data(matrix_row, c + 2, '')
+
+            bl_qty = float(
+                v['bl_quantity'] or 0
+            )
+
+            balance = max(
+                bl_qty - vessel_totals[v['id']],
+                0
+            )
+
+            # Label under vessel
+            header(
+                matrix_row,
+                c,
+                'Balance on Board'
+            )
+
+            # Balance value
+            data(
+                matrix_row,
+                c + 1,
+                balance
+            )
+
+            data(
+                matrix_row,
+                c + 2,
+                ''
+            )
+
         matrix_row += 1
 
-        # AVG DISCHARGE RATE PWWD row = total qty / total W/W hours
-        caption(matrix_row, 2, 'Avg Discharge Rate PWWD', font=header_font)
+
+        # =====================================================
+        # AVG DISCHARGE RATE PWWD
+        # =====================================================
+
+        # Keep column B BLANK
+        caption(
+            matrix_row,
+            2,
+            '',
+            font=header_font
+        )
+
         for v in vessels:
+
             c = vessel_col_map[v['id']]
-            header(matrix_row, c, 'Avg Discharge Rate PWWD')
+
+            # Label under vessel
+            header(
+                matrix_row,
+                c,
+                'Avg Discharge Rate PWWD'
+            )
+
             total_ww = vessel_ww_totals[v['id']]
+
             if total_ww > 0:
-                avg_rate = round(vessel_totals[v['id']] / total_ww, 2)
+
+                avg_rate = round(
+                    vessel_totals[v['id']] / total_ww,
+                    2
+                )
+
             else:
-                avg_rate = 'NA'
-            data(matrix_row, c + 1, avg_rate)
-            data(matrix_row, c + 2, '')
+
+                avg_rate = ''
+
+            # Value
+            data(
+                matrix_row,
+                c + 1,
+                avg_rate
+            )
+
+            data(
+                matrix_row,
+                c + 2,
+                ''
+            )
+
         matrix_row += 1
 
-        # HOOKS AVAILABLE row — no data source in schema; left as NA.
-        caption(matrix_row, 2, 'Hooks Available', font=header_font)
+
+        # =====================================================
+        # HOOKS AVAILABLE
+        # =====================================================
+
+        # Keep column B BLANK
+        caption(
+            matrix_row,
+            2,
+            '',
+            font=header_font
+        )
+
         for v in vessels:
-            c = vessel_col_map[v['id']]
-            header(matrix_row, c, 'Hooks Available')
-            data(matrix_row, c + 1, 'NA')
-            data(matrix_row, c + 2, '')
-        matrix_row += 1
 
+            c = vessel_col_map[v['id']]
+
+            # Label under vessel
+            header(
+                matrix_row,
+                c,
+                'Hooks Available'
+            )
+
+            data(
+                matrix_row,
+                c + 1,
+                ''
+            )
+
+            data(
+                matrix_row,
+                c + 2,
+                ''
+            )
+
+        matrix_row += 1
         # =====================================================
         # DELAYS (per vessel) — display block, unrelated to the
         # W/W deduction math above (this shows ALL delay types,
@@ -5214,7 +5482,7 @@ LEFT JOIN ldud_vessel_operations lco
             c = vessel_col_map[v['id']]
             ws.merge_cells(start_row=matrix_row, start_column=c,
                             end_row=matrix_row, end_column=c + VESSEL_BLOCK_WIDTH - 1)
-            text = "\n".join(delay_text_by_vessel[v['id']]) or 'NA'
+            text = "\n".join(delay_text_by_vessel[v['id']]) or ''
             cell = ws.cell(matrix_row, c, text)
             cell.font = delay_font
             cell.alignment = left
@@ -5342,7 +5610,7 @@ LEFT JOIN ldud_vessel_operations lco
                     computed = barge_stats.get(v['id'], {}).get(key, [])
                     text = ' + '.join(computed) if computed else None
 
-                data(row_no, c, text if text else 'NA', align=left, span=VESSEL_BLOCK_WIDTH)
+                data(row_no, c, text if text else '', align=left, span=VESSEL_BLOCK_WIDTH)
 
             if key == 'remarks':
                 remarks_row_no = row_no

@@ -724,7 +724,7 @@ def revenue_backdated_apply():
     if errors:
         return jsonify({'error': 'Fix format errors before applying',
                         'format_errors': errors}), 400
-    inserted, months = revenue.replace_months(rows, session.get('user_id'))
+    inserted, months = revenue.replace_all(rows, session.get('user_id'))
     return jsonify({'inserted': inserted, 'months': months})
 
 

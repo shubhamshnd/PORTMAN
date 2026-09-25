@@ -264,6 +264,9 @@ def replace_all(rows, uploaded_by):
         conn.close()
 
 
+replace_months = replace_all
+
+
 def get_status():
     """{count, uploaded_at, months} for the stored backdated dataset."""
     conn = get_db()

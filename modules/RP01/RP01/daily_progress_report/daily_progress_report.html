@@ -601,91 +601,157 @@ function renderMonthlyReport(data) {
     }
 
     const vesselList = data;
-    console.log("Monthly Order");
-vesselList.forEach(v => {
-    console.log(v.vessel_seq, v.vessel_name);
-});
 
-    // ? Collect unique dates from all vessels
+    console.log("Monthly Order");
+
+    vesselList.forEach(v => {
+        console.log(v.vessel_seq, v.vessel_name);
+    });
+
+
+    // ============================================================
+    // COLLECT UNIQUE DATES
+    // ============================================================
+
     const uniqueDatesSet = new Set();
 
     vesselList.forEach(vessel => {
+
         (vessel.daily_data || []).forEach(day => {
+
             if (day.date_day) {
                 uniqueDatesSet.add(day.date_day);
             }
+
         });
+
     });
 
-    // ? Sort DD-MM-YYYY dates correctly in ascending order
-    const uniqueDates = Array.from(uniqueDatesSet).sort((a, b) => {
-        const [ad, am, ay] = a.split('-').map(Number);
-        const [bd, bm, by] = b.split('-').map(Number);
-        return new Date(ay, am - 1, ad) - new Date(by, bm - 1, bd);
-    });
 
-    // ? Guard: if no dates found, show a message and stop
+    // ============================================================
+    // SORT DATES
+    // ============================================================
+
+    const uniqueDates =
+        Array.from(uniqueDatesSet).sort((a, b) => {
+
+            const [ad, am, ay] =
+                a.split('-').map(Number);
+
+            const [bd, bm, by] =
+                b.split('-').map(Number);
+
+            return new Date(ay, am - 1, ad)
+                -
+                new Date(by, bm - 1, bd);
+        });
+
+
+    // ============================================================
+    // NO DATA
+    // ============================================================
+
     if (!uniqueDates.length) {
+
         container.innerHTML += `
-            <div class="report-section" style="margin-top:20px;">
-                <h4>Monthly Cargo Discharge Report</h4>
-                <p style="color:red;">No discharge data found for this period.</p>
+
+            <div
+                class="report-section"
+                style="margin-top:20px;"
+            >
+
+                <h4>
+                    Monthly Cargo Discharge Report
+                </h4>
+
+                <p style="color:red;">
+                    No discharge data found for this period.
+                </p>
+
             </div>
+
         `;
+
         return;
     }
 
+
+    // ============================================================
+    // START MONTHLY REPORT
+    // ============================================================
+
     let html = `
 
-    <div class="report-section" style="margin-top:20px;">
+        <div
+            class="report-section"
+            style="margin-top:20px;"
+        >
 
-        <h4>Monthly Cargo Discharge Report</h4>
+            <h4>
+                Monthly Cargo Discharge Report
+            </h4>
 
-        <div style="overflow-x:auto;">
+            <div style="overflow-x:auto;">
 
-            <table
-                class="report-table monthly-report-table"
-                style="
-                    border-collapse:collapse;
-                    width:max-content;
-                    min-width:100%;
-                    table-layout:fixed;
-                "
-            >
+                <table
+                    class="report-table monthly-report-table"
+                    style="
+                        border-collapse:collapse;
+                        width:max-content;
+                        min-width:100%;
+                        table-layout:fixed;
+                    "
+                >
 
-                <thead>
+                    <thead>
 
-                    <tr
-                        style="
-                            background:#fff200;
-                            color:red;
-                            font-weight:700;
-                            text-align:center;
-                        "
-                    >
+                        <!-- =================================================
+                             MAIN HEADER
+                        ================================================== -->
 
-                        <th rowspan="2"
+                        <tr
                             style="
-                                min-width:90px;
-                                vertical-align:middle;
+                                background:#fff200;
+                                color:red;
+                                font-weight:700;
                                 text-align:center;
-                            ">
-                            Date / Day
-                        </th>
+                            "
+                        >
 
-                        <th rowspan="2"
-                            style="
-                                min-width:90px;
-                                vertical-align:middle;
-                                text-align:center;
-                            ">
-                            Total MV
-                        </th>
+                            <th
+                                rowspan="2"
+                                style="
+                                    min-width:90px;
+                                    vertical-align:middle;
+                                    text-align:center;
+                                "
+                            >
+                                Date / Day
+                            </th>
+
+
+                            <th
+                                rowspan="2"
+                                style="
+                                    min-width:90px;
+                                    vertical-align:middle;
+                                    text-align:center;
+                                "
+                            >
+                                Total MV
+                            </th>
+
     `;
+
+
+    // ============================================================
+    // VESSEL HEADERS
+    // ============================================================
 
     vesselList.forEach(vessel => {
 
         html += `
+
             <th
                 colspan="3"
                 style="
@@ -697,137 +763,244 @@ vesselList.forEach(v => {
             >
                 ${vessel.vessel_name}
             </th>
+
         `;
+
     });
 
-    html += `
-                    </tr>
 
-                    <tr
-                        style="
-                            background:#fff200;
-                            color:red;
-                            font-weight:700;
-                            text-align:center;
-                        "
-                    >
+    html += `
+
+                        </tr>
+
+
+                        <!-- =================================================
+                             SECOND HEADER
+                        ================================================== -->
+
+                        <tr
+                            style="
+                                background:#fff200;
+                                color:red;
+                                font-weight:700;
+                                text-align:center;
+                            "
+                        >
+
     `;
+
 
     vesselList.forEach(vessel => {
 
-        // ? Show combined cargo name in sub-header per vessel
         html += `
 
-            <th style="width:140px;text-align:center;">
+            <th
+                style="
+                    width:140px;
+                    text-align:center;
+                "
+            >
                 ${vessel.cargo_name || 'Cargo / Source'}
             </th>
 
-            <th style="width:80px;text-align:center;">
+
+            <th
+                style="
+                    width:80px;
+                    text-align:center;
+                "
+            >
                 Qty in MT
             </th>
 
-            <th style="width:80px;text-align:center;">
+
+            <th
+                style="
+                    width:80px;
+                    text-align:center;
+                "
+            >
                 W/W Hrs.
             </th>
+
         `;
+
     });
 
+
     html += `
-                    </tr>
 
-                </thead>
+                        </tr>
 
-                <tbody>
+                    </thead>
+
+
+                    <tbody>
+
     `;
 
-    // ? Grand total accumulators
-    let grandTotalQty = 0;
-    const vesselTotals = vesselList.map(() => 0);
+
+    // ============================================================
+    // VESSEL TOTAL ACCUMULATORS
+    //
+    // IMPORTANT:
+    // grandTotalQty has been removed because the TOTAL row
+    // is no longer required.
+    // ============================================================
+
+    const vesselTotals =
+        vesselList.map(() => 0);
+
+
+    // ============================================================
+    // DAILY ROWS
+    // ============================================================
 
     uniqueDates.forEach(currentDate => {
 
         let totalMvQty = 0;
 
+
+        // --------------------------------------------------------
+        // Total MV for the current day
+        // --------------------------------------------------------
+
         const firstVesselDay =
             (vesselList[0].daily_data || [])
-            .find(d => d.date_day === currentDate);
+                .find(
+                    d => d.date_day === currentDate
+                );
+
 
         if (firstVesselDay) {
-            totalMvQty = Number(firstVesselDay.total_mv || 0);
+
+            totalMvQty =
+                Number(
+                    firstVesselDay.total_mv || 0
+                );
+
         }
 
-        grandTotalQty += totalMvQty;
+
+        // --------------------------------------------------------
+        // DAILY ROW
+        // --------------------------------------------------------
 
         html += `
+
             <tr>
-                <td style="text-align:center;">
+
+                <td
+                    style="
+                        text-align:center;
+                    "
+                >
                     ${currentDate}
                 </td>
-                <td style="text-align:right;">
-                    ${totalMvQty > 0 ? totalMvQty.toLocaleString('en-IN') : '-'}
+
+
+                <td
+                    style="
+                        text-align:right;
+                    "
+                >
+                    ${
+                        totalMvQty > 0
+                            ? totalMvQty.toLocaleString('en-IN')
+                            : '-'
+                    }
                 </td>
+
         `;
+
+
+        // --------------------------------------------------------
+        // VESSEL DATA
+        // --------------------------------------------------------
 
         vesselList.forEach((vessel, idx) => {
 
             const dayData =
                 (vessel.daily_data || [])
-                .find(d => d.date_day === currentDate);
+                    .find(
+                        d => d.date_day === currentDate
+                    );
 
-            const qty = dayData ? Number(dayData.total_qty || 0) : 0;
+
+            const qty =
+                dayData
+                    ? Number(dayData.total_qty || 0)
+                    : 0;
+
+
+            // Keep vessel totals for other calculations
             vesselTotals[idx] += qty;
 
+
             html += `
-                <td style="text-align:left;">
+
+                <td
+                    style="
+                        text-align:left;
+                    "
+                >
                     ${vessel.cargo_name || '-'}
                 </td>
 
-                <td style="text-align:right;">
-                    ${qty > 0 ? qty.toLocaleString('en-IN') : '-'}
+
+                <td
+                    style="
+                        text-align:right;
+                    "
+                >
+                    ${
+                        qty > 0
+                            ? qty.toLocaleString('en-IN')
+                            : '-'
+                    }
                 </td>
 
-                <td style="text-align:center;">
-                    ${qty > 0 ? (dayData.ww_hrs || '-') : '-'}
+
+                <td
+                    style="
+                        text-align:center;
+                    "
+                >
+                    ${
+                        qty > 0
+                            ? (dayData.ww_hrs || '-')
+                            : '-'
+                    }
                 </td>
+
             `;
+
         });
 
-        html += `</tr>`;
-    });
-
-       // ============================================================
-    // TOTAL ROW
-    // ============================================================
-
-    html += `
-        <tr style="font-weight:bold;background:#f2f2f2;">
-            <td style="text-align:center;">TOTAL</td>
-
-            <td style="text-align:right;">
-                ${grandTotalQty.toLocaleString('en-IN')}
-            </td>
-    `;
-
-    vesselList.forEach((vessel, idx) => {
 
         html += `
-            <td style="font-weight:bold;">
-                TOTAL
-            </td>
 
-            <td style="text-align:right;font-weight:bold;">
-                ${vesselTotals[idx] > 0
-                    ? vesselTotals[idx].toLocaleString('en-IN')
-                    : '-'}
-            </td>
+            </tr>
 
-            <td style="text-align:center;font-weight:bold;">
-                ${vessel.ww_hrs_total || '-'}
-            </td>
         `;
+
     });
 
-    html += `</tr>`;
+
+    // ============================================================
+    // TOTAL ROW REMOVED
+    //
+    // The old block:
+    //
+    // <tr>
+    //     TOTAL
+    //     grandTotalQty
+    //     vesselTotals
+    // </tr>
+    //
+    // has intentionally been removed.
+    // ============================================================
+
 
 
     // ============================================================
@@ -835,27 +1008,54 @@ vesselList.forEach(v => {
     // ============================================================
 
     html += `
+
         <tr>
+
             <td></td>
+
             <td></td>
+
     `;
+
 
     vesselList.forEach(vessel => {
 
         html += `
-            <td style="font-weight:600;">
+
+            <td
+                style="
+                    font-weight:600;
+                "
+            >
                 Balance on Board
             </td>
 
-            <td style="text-align:right;">
-                ${(Number(vessel.balance_on_board || 0)).toLocaleString('en-IN')}
+
+            <td
+                style="
+                    text-align:right;
+                "
+            >
+                ${
+                    Number(
+                        vessel.balance_on_board || 0
+                    ).toLocaleString('en-IN')
+                }
             </td>
 
+
             <td></td>
+
         `;
+
     });
 
-    html += `</tr>`;
+
+    html += `
+
+        </tr>
+
+    `;
 
 
     // ============================================================
@@ -863,27 +1063,55 @@ vesselList.forEach(v => {
     // ============================================================
 
     html += `
+
         <tr>
+
             <td></td>
+
             <td></td>
+
     `;
+
 
     vesselList.forEach(vessel => {
 
         html += `
-            <td style="font-weight:bold;">
+
+            <td
+                style="
+                    font-weight:bold;
+                "
+            >
                 Avg Discharge Rate PWWD
             </td>
 
-            <td style="text-align:right;font-weight:bold;">
-                ${(Number(vessel.avg_discharge_rate || 0)).toLocaleString('en-IN')}
+
+            <td
+                style="
+                    text-align:right;
+                    font-weight:bold;
+                "
+            >
+                ${
+                    Number(
+                        vessel.avg_discharge_rate || 0
+                    ).toLocaleString('en-IN')
+                }
             </td>
 
+
             <td></td>
+
         `;
+
     });
 
-    html += `</tr>`;
+
+    html += `
+
+        </tr>
+
+    `;
 
 
     // ============================================================
@@ -891,35 +1119,122 @@ vesselList.forEach(v => {
     // ============================================================
 
     html += `
+
         <tr>
+
             <td></td>
+
             <td></td>
+
     `;
+
 
     vesselList.forEach(vessel => {
 
         html += `
+
             <td>
                 Hooks Available
             </td>
 
-            <td style="text-align:center;">
+
+            <td
+                style="
+                    text-align:center;
+                "
+            >
                 ${vessel.hooks_available || '4'}
             </td>
 
-            <td></td>
-        `;
-    });
 
-    html += `</tr>`;
+            <td></td>
+
+        `;
+
+    });
 
 
     html += `
-        </tbody>
-        </table>
-        </div>
-    </div>
+
+        </tr>
+
     `;
+
+
+    // ============================================================
+    // VESSEL DELAY DETAILS
+    //
+    // This remains INSIDE the same monthly table so that
+    // each vessel's delay appears directly underneath
+    // that vessel's 3 columns.
+    // ============================================================
+
+    html += `
+
+        <tr id="vessel-delay-row">
+
+            <td
+                colspan="2"
+                style="
+                    vertical-align:top;
+                    font-weight:700;
+                    background:#f2f2f2;
+                    text-align:left;
+                "
+            >
+                Vessel Delay Details
+            </td>
+
+    `;
+
+
+    vesselList.forEach(vessel => {
+
+        html += `
+
+            <td
+                colspan="3"
+                class="vessel-delay-cell"
+                data-vessel-name="${vessel.vessel_name || ''}"
+                style="
+                    vertical-align:top;
+                    padding:8px;
+                    min-width:300px;
+                    background:#ffffff;
+                    font-size:14px;
+                    white-space:normal;
+                "
+            >
+            </td>
+
+        `;
+
+    });
+
+
+    html += `
+
+        </tr>
+
+    `;
+
+
+    // ============================================================
+    // CLOSE TABLE
+    // ============================================================
+
+    html += `
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    `;
+
 
     container.innerHTML += html;
 }
@@ -1036,128 +1351,172 @@ async function loadVesselDelayReport(reportDate) {
 
 function renderVesselDelayReport(data) {
 
+    console.log("========== RENDER VESSEL DELAY ==========");
+
     const container =
         document.getElementById('report-container');
 
-    if (!data || !data.length) {
+    if (!container) {
         return;
     }
 
-    let delayHtml = `
+    // ------------------------------------------------------------
+    // Find the delay cells already created inside the
+    // Monthly Cargo Discharge Report.
+    // ------------------------------------------------------------
 
-        <div class="report-section" style="margin-top:30px;">
+    const delayCells =
+        document.querySelectorAll('.vessel-delay-cell');
 
-            <h4>
-                Vessel Delay Details
-            </h4>
+    if (!delayCells || !delayCells.length) {
 
-            <div style="overflow-x:auto;">
+        console.warn(
+            "Vessel delay row not found in Monthly Cargo Discharge Report"
+        );
 
-                <table class="report-table">
+        return;
+    }
 
-                    <!-- VESSEL HEADER -->
+    // ------------------------------------------------------------
+    // Clear ALL delay cells first.
+    // This guarantees that vessels without delays remain blank.
+    // ------------------------------------------------------------
 
-                    <tr style="
-                        background:#dfe6ee;
-                        font-weight:700;
-                    ">
-    `;
+    delayCells.forEach(cell => {
 
-    // VESSEL NAMES
-    data.forEach(v => {
+        cell.innerHTML = '';
 
-        delayHtml += `
+        cell.style.background = '#ffffff';
 
-            <th style="
-                min-width:350px;
-                text-align:center;
-                font-size:18px;
-            ">
-
-                ${v.vessel_name || '-'}
-
-            </th>
-        `;
     });
 
-    delayHtml += `</tr>`;
 
-    // DELAY CONTENT ROW
-    delayHtml += `<tr>`;
+    // ------------------------------------------------------------
+    // If API returns no delay data,
+    // keep all cells blank.
+    // DO NOT hide the vessels.
+    // ------------------------------------------------------------
 
-    data.forEach(v => {
+    if (!Array.isArray(data) || data.length === 0) {
+
+        console.log("No vessel delays found.");
+
+        return;
+    }
+
+
+    // ------------------------------------------------------------
+    // Match API delay data with the vessel already displayed
+    // in the Monthly Cargo Discharge Report.
+    // ------------------------------------------------------------
+
+    data.forEach(vesselDelay => {
+
+        const vesselName =
+            (vesselDelay.vessel_name || '')
+            .trim()
+            .toLowerCase();
+
+        if (!vesselName) {
+            return;
+        }
+
+
+        // Find the exact vessel column in monthly report
+        let targetCell = null;
+
+        delayCells.forEach(cell => {
+
+            const cellVessel =
+                (cell.dataset.vesselName || '')
+                .trim()
+                .toLowerCase();
+
+            if (cellVessel === vesselName) {
+                targetCell = cell;
+            }
+
+        });
+
+
+        // Vessel exists in delay API but not in monthly report
+        if (!targetCell) {
+
+            console.warn(
+                "Delay vessel not found in monthly report:",
+                vesselDelay.vessel_name
+            );
+
+            return;
+        }
+
+
+        // --------------------------------------------------------
+        // Build delay content
+        // --------------------------------------------------------
 
         let delayContent = '';
 
-        (v.delays || []).forEach(d => {
 
-            if (!d.delay_name) {
+        (vesselDelay.delays || []).forEach(delay => {
+
+            if (!delay || !delay.delay_name) {
                 return;
             }
 
+
             delayContent += `
 
-    <div style="
-        margin-bottom:8px;
-    ">
+                <div style="
+                    margin-bottom:8px;
+                ">
 
-        <div style="
-            font-weight:700;
-            color:#c62828;
-            margin-bottom:2px;
-        ">
-            ${d.delay_name} :
-        </div>
+                    <div style="
+                        font-weight:700;
+                        color:#c62828;
+                        margin-bottom:2px;
+                    ">
+                        ${delay.delay_name} :
+                    </div>
 
-        <div style="
-            padding-left:10px;
-            white-space:pre-line;
-            line-height:1.3;
-            font-size:14px;
-        ">
-            ${d.crane_details || '-'}
-        </div>
+                    <div style="
+                        padding-left:10px;
+                        white-space:pre-line;
+                        line-height:1.3;
+                        font-size:14px;
+                    ">
+                        ${delay.crane_details || ''}
+                    </div>
 
-    </div>
-`;
+                </div>
+
+            `;
         });
 
-        delayHtml += `
 
-    <td style="
-        vertical-align:top;
-        background:#fff9c4;
-        padding:8px;
-        font-size:14px;
-    ">
+        // --------------------------------------------------------
+        // Only show yellow background when there is
+        // an actual delay.
+        // --------------------------------------------------------
 
-        ${delayContent || `
-<div style="
-    text-align:center;
-    color:#666;
-    font-weight:600;
-    padding:8px 0;
-">
-    No Delay
-</div>
-`}
+        if (delayContent.trim()) {
 
-    </td>
-`;
+            targetCell.innerHTML = delayContent;
+
+            targetCell.style.background = '#fff9c4';
+
+        } else {
+
+            // No delay = completely blank
+            targetCell.innerHTML = '';
+
+            targetCell.style.background = '#ffffff';
+        }
+
     });
 
-    delayHtml += `
 
-                    </tr>
-
-                </table>
-
-            </div>
-
-        </div>
-    `;
-
-    container.innerHTML += delayHtml;
+    console.log("========== VESSEL DELAY RENDERED ==========");
 }
 
 async function loadBargeStatusReport(reportDate) {

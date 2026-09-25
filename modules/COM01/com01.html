@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Conveyor Operator Master - PORTMAN{% endblock %}
+
+{% block content %}
+<div class="module-header">
+    <h2>Conveyor Operator Master</h2>
+    <span class="module-code">COM01</span>
+</div>
+
+<div class="toolbar">
+    {% if permissions.can_add %}<button class="btn btn-add" onclick="addRow()">+ Add Row</button>{% endif %}
+    {% if permissions.can_delete %}<button class="btn btn-delete" onclick="deleteSelected()">Delete Selected</button>{% endif %}
+    {% if permissions.can_add or permissions.can_edit %}<button class="btn btn-save" onclick="saveAll()">Save (Ctrl+S)</button>{% endif %}
+    <div class="row-info">Rows: <span id="rowCount">0</span> / <span id="totalCount">0</span></div>
+</div>
+
+<div id="table"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    addToRecent('COM01', 'Conveyor Operator Master');
+    let table;
+    const canEdit = {{ permissions.can_edit|default(0) }} || {{ permissions.can_add|default(0) }};
+
+    function initTable() {
+        table = new Tabulator("#table", {
+            height: "calc(100vh - 160px)",
+            layout: "fitColumns",
+            columns: [
+                {formatter: "rowSelection", titleFormatter: "rowSelection", hozAlign: "center", headerSort: false, width: 40},
+                {title: "Operator Name", field: "name", editor: canEdit ? "input" : false, widthGrow: 2},
+                {title: "Contact No.", field: "contact_no", editor: canEdit ? "input" : false, widthGrow: 1}
+            ],
+            pagination: true,
+            paginationMode: "remote",
+            paginationSize: 20,
+            ajaxURL: "/api/module/COM01/data",
+            ajaxResponse: function(url, params, response) {
+                document.getElementById('rowCount').textContent = response.data.length;
+                document.getElementById('totalCount').textContent = response.total;
+                return response;
+            },
+            selectable: true
+        });
+        if (localStorage.getItem('theme') === 'dark') {
+            document.getElementById('table').classList.add('tabulator-dark');
+        }
+    }
+
+    function addRow() { table.addRow({}, false); }
+
+    function deleteSelected() {
+        const selected = table.getSelectedRows();
+        if (selected.length === 0) { alert('Select rows to delete'); return; }
+        if (!confirm(`Delete ${selected.length} row(s)?`)) return;
+        selected.forEach(row => {
+            const id = row.getData().id;
+            if (id) {
+                fetch("/api/module/COM01/delete", {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: id})
+                });
+            }
+            row.delete();
+        });
+    }
+
+    async function saveAll() {
+        const rows = table.getRows();
+        let savedCount = 0;
+        for (const row of rows) {
+            const data = row.getData();
+            const res = await fetch("/api/module/COM01/save", {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if (result.id) {
+                row.update({id: result.id});
+            }
+            if (result.success) {
+                savedCount++;
+            }
+        }
+        table.setData("/api/module/COM01/data");
+        if (savedCount > 0) {
+            alert('Saved ' + savedCount + ' record(s) successfully!');
+        }
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveAll(); }
+    });
+
+    initTable();
+</script>
+{% endblock %}

@@ -232,14 +232,14 @@ def save_header(data):
 
     if row_id:
         _computed = {'id', 'doc_num', 'vcn_display', 'vcn_doc_date', 'vcn_doc_status', 'cargo_names_display', 'bl_quantities_display',
-                     'balance_display', 'agent_name', 'stevedore_name', 'ops_started', 'ops_completed'}
+                     'balance_display', 'agent_name', 'stevedore_name', 'ops_started', 'ops_completed', '_proof_doc_id', '_proof_filename', '_proof_count'}
         cols = [k for k in data if k not in _computed]
         cur.execute(f"UPDATE ldud_header SET {', '.join([f'{c}=%s' for c in cols])} WHERE id=%s",
                    [data[c] for c in cols] + [row_id])
     else:
         data['doc_num'] = get_next_doc_num()
         _computed = {'id', 'vcn_display', 'cargo_names_display', 'bl_quantities_display',
-                     'balance_display', 'agent_name', 'stevedore_name', 'ops_started', 'ops_completed'}
+                     'balance_display', 'agent_name', 'stevedore_name', 'ops_started', 'ops_completed', '_proof_doc_id', '_proof_filename', '_proof_count'}
         cols = [k for k in data if k not in _computed]
         cur.execute(f"INSERT INTO ldud_header ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(cols))}) RETURNING id",
                    [data[c] for c in cols])

@@ -419,13 +419,11 @@ def get_cargo_report():
                     DISTINCT ih.invoice_status,
                     ', ' ORDER BY ih.invoice_status
                 ) AS invoice_statuses
-            FROM bill_lines bl
-            JOIN invoice_lines il
-                ON il.bill_id = bl.bill_id
-            JOIN invoice_header ih
-                ON ih.id = il.invoice_id
-            WHERE bl.cargo_source_type = 'VCN_IMPORT'
-              AND bl.cargo_source_id = lh.id
+            FROM invoice_header ih
+            WHERE NULLIF(TRIM(ih.vessel_call_no), '') IS NOT NULL
+              AND LOWER(TRIM(ih.vessel_call_no)) =
+                  LOWER(TRIM(vh.vcn_doc_num))
+              AND COALESCE(ih.is_cancelled, 0) = 0
         ) inv_mv ON TRUE
 
 
@@ -629,7 +627,7 @@ def get_cargo_report():
                 # Material PO -> bill_id -> invoice_lines -> invoice_header
                 # relationship for MBC records.
                 'invoice_number':
-                    row['invoice_number'] or '',
+                    row['invoice_number'] or 'NA',
 
                 'status':
                     row['status'] or '-',
@@ -1212,13 +1210,11 @@ def download_cargo_handling_report():
                     DISTINCT ih.invoice_status,
                     ', ' ORDER BY ih.invoice_status
                 ) AS invoice_statuses
-            FROM bill_lines bl
-            JOIN invoice_lines il
-                ON il.bill_id = bl.bill_id
-            JOIN invoice_header ih
-                ON ih.id = il.invoice_id
-            WHERE bl.cargo_source_type = 'VCN_IMPORT'
-              AND bl.cargo_source_id = lh.id
+            FROM invoice_header ih
+            WHERE NULLIF(TRIM(ih.vessel_call_no), '') IS NOT NULL
+              AND LOWER(TRIM(ih.vessel_call_no)) =
+                  LOWER(TRIM(vh.vcn_doc_num))
+              AND COALESCE(ih.is_cancelled, 0) = 0
         ) inv_mv ON TRUE
 
 

@@ -943,38 +943,134 @@ def _fetch_vessel_call_ledger():
 
 def _fetch_direct_barge_count_by_month():
     """
-    lueu_lines and rp01_historical_lueu rows with no VCN/MBC parent —
-    treated as direct barge activity, bucketed by entry_date month.
+    lueu_lines and rp01_historical_lueu rows with no VCN/MBC parent
+    are treated as direct barge activity.
+
+    Existing direct-barge counts are preserved.
+
+    If a month has no direct-barge count, live VCN barge activity
+    from lueu_lines is used for that month.
+
     Returns {(year, month): count}.
     """
     conn = get_db()
-    cur  = get_cursor(conn)
+    cur = get_cursor(conn)
 
+    # ---------------------------------------------------------
+    # Existing direct barge logic
+    # DO NOT change this logic
+    # ---------------------------------------------------------
     cur.execute("""
         SELECT entry_date::text AS entry_date
         FROM lueu_lines
         WHERE is_deleted IS NOT TRUE
-          AND (source_type IS NULL OR TRIM(source_type) = '' OR source_type NOT IN ('VCN', 'MBC'))
+          AND (
+                source_type IS NULL
+                OR TRIM(source_type) = ''
+                OR source_type NOT IN ('VCN', 'MBC')
+              )
 
         UNION ALL
 
         SELECT entry_date::text AS entry_date
         FROM rp01_historical_lueu
-        WHERE (source_display IS NULL OR TRIM(source_display) = '' OR (mv_mbc IS NOT NULL AND UPPER(TRIM(mv_mbc)) NOT IN ('MV', 'VCN', 'MBC')))
+        WHERE (
+                source_display IS NULL
+                OR TRIM(source_display) = ''
+                OR (
+                    mv_mbc IS NOT NULL
+                    AND UPPER(TRIM(mv_mbc))
+                        NOT IN ('MV', 'VCN', 'MBC')
+                )
+              )
     """)
-    rows = cur.fetchall()
-    conn.close()
 
-    counts = defaultdict(int)
+    rows = cur.fetchall()
+
+    direct_counts = defaultdict(int)
+
     for r in rows:
         raw = r.get('entry_date') if isinstance(r, dict) else r[0]
+
         if not raw:
             continue
+
         try:
-            d = datetime.strptime(str(raw).strip()[:10], '%Y-%m-%d').date()
+            d = datetime.strptime(
+                str(raw).strip()[:10],
+                '%Y-%m-%d'
+            ).date()
         except Exception:
             continue
-        counts[(d.year, d.month)] += 1
+
+        direct_counts[(d.year, d.month)] += 1
+
+    # ---------------------------------------------------------
+    # LIVE VCN BARGE DATA
+    # Only used when existing direct-barge count is zero.
+    # ---------------------------------------------------------
+    cur.execute("""
+        SELECT
+            entry_date::text AS entry_date,
+            source_id,
+            UPPER(TRIM(barge_name)) AS barge_name
+        FROM lueu_lines
+        WHERE is_deleted IS NOT TRUE
+          AND UPPER(TRIM(source_type)) = 'VCN'
+          AND COALESCE(TRIM(barge_name), '') <> ''
+          AND entry_date::text ~
+              '^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}'
+    """)
+
+    live_rows = cur.fetchall()
+    conn.close()
+
+    live_barges = defaultdict(set)
+
+    for r in live_rows:
+        if isinstance(r, dict):
+            raw = r.get('entry_date')
+            source_id = r.get('source_id')
+            barge_name = r.get('barge_name')
+        else:
+            raw = r[0]
+            source_id = r[1]
+            barge_name = r[2]
+
+        if not raw or not barge_name:
+            continue
+
+        try:
+            d = datetime.strptime(
+                str(raw).strip()[:10],
+                '%Y-%m-%d'
+            ).date()
+        except Exception:
+            continue
+
+        # Unique VCN + barge combination
+        live_barges[(d.year, d.month)].add(
+            (
+                source_id,
+                str(barge_name).strip().upper()
+            )
+        )
+
+    # ---------------------------------------------------------
+    # FINAL COUNTS
+    #
+    # Existing Apr/May values remain unchanged.
+    # Live VCN barges are used only for months where the
+    # existing direct-barge count is zero.
+    # ---------------------------------------------------------
+    counts = defaultdict(int)
+
+    for key, value in direct_counts.items():
+        counts[key] = value
+
+    for key, barges in live_barges.items():
+        if counts.get(key, 0) == 0:
+            counts[key] = len(barges)
 
     return counts
 
