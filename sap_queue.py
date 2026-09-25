@@ -98,7 +98,24 @@ def _claim(qid):
     return dict(row) if row else None
 
 
+def _already_in_sap(row):
+    """A timed-out POST may still have landed in SAP. If the inbound callback has
+    since stamped a SAP document number on the invoice, re-posting would duplicate it."""
+    if row['job_type'] != 'post' or not row.get('invoice_id'):
+        return None
+    conn = get_db()
+    cur = get_cursor(conn)
+    cur.execute("SELECT sap_document_number FROM invoice_header WHERE id=%s", [row['invoice_id']])
+    r = cur.fetchone()
+    conn.close()
+    return (r and (r['sap_document_number'] or '').strip()) or None
+
+
 def _attempt(row):
+    sap_doc = _already_in_sap(row)
+    if sap_doc:
+        _mark_sent(row, sap_doc)
+        return
     payload = json.loads(row['payload'])
     result = sap_client.post_invoice_to_sap(
         payload, row['reference_type'], row['reference_id'] or 0,
@@ -157,6 +174,10 @@ def manual_send(queue_id):
     row = _claim_for_manual(queue_id)
     if not row:
         return {'ok': False, 'error': 'Queue item not found or already sent'}
+    sap_doc = _already_in_sap(row)
+    if sap_doc:
+        _mark_sent(row, sap_doc)
+        return {'ok': True, 'sap_document_number': sap_doc}
     payload = json.loads(row['payload'])
     result = sap_client.post_invoice_to_sap(
         payload, row['reference_type'], row['reference_id'] or 0,

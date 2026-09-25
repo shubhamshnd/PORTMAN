@@ -35,7 +35,7 @@ def _get_oauth_token(config, force_refresh=False):
         'client_id':     config['client_id'],
         'client_secret': config['client_secret'],
         'grant_type':    'client_credentials',
-    }, timeout=30)
+    }, timeout=120)
     resp.raise_for_status()
     body = resp.json()
 
@@ -122,7 +122,7 @@ def post_invoice_to_sap(payload, reference_type, reference_id, reference_number,
 
     try:
         started_at = time.time()
-        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        resp = requests.post(url, json=payload, headers=headers, timeout=120)
         duration_ms = int((time.time() - started_at) * 1000)
         resp_body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {'raw': resp.text}
 
