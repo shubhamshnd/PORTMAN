@@ -546,46 +546,29 @@ def _parse_filter_date(d_str):
     try: return datetime.strptime(d_str.strip()[:10], '%Y-%m-%d').date()
     except (ValueError, TypeError): return None
 
-BACKDATED_MIN_DATE = date(2026, 4, 1)
-BACKDATED_MAX_DATE = date(2026, 6, 30)
-
 def get_backdated_cargo_rows(from_date=None, to_date=None):
-    f_date = _parse_filter_date(from_date)
-    t_date = _parse_filter_date(to_date)
-
-    # Strictly no backdated records if query starts after 30 June 2026 (1 July onwards is live current)
-    if f_date and f_date > BACKDATED_MAX_DATE:
-        return []
-    if t_date and t_date < BACKDATED_MIN_DATE:
-        return []
-
     conn = get_db()
     cur = get_cursor(conn)
     try:
         cur.execute(f"SELECT * FROM {TABLE} ORDER BY id ASC")
         raw_rows = cur.fetchall()
+        f_date = _parse_filter_date(from_date)
+        t_date = _parse_filter_date(to_date)
         out = []
         for r in raw_rows:
             commenced_dt = parse_datetime(r.get('discharge_commenced'))
             completed_dt = parse_datetime(r.get('discharge_completed'))
             comm_date = commenced_dt.date() if isinstance(commenced_dt, datetime) else None
             comp_date = completed_dt.date() if isinstance(completed_dt, datetime) else None
-            active_date = comm_date or comp_date
-            if not active_date:
-                continue
-            # Strictly within [2026-04-01, 2026-06-30]
-            if active_date < BACKDATED_MIN_DATE or active_date > BACKDATED_MAX_DATE:
-                continue
             if f_date or t_date:
-                start_d = comm_date or comp_date
-                end_d = comp_date or comm_date
+                active_date = comm_date or comp_date
+                if not active_date: continue
                 if f_date and t_date:
-                    if not (start_d <= t_date and end_d >= f_date):
-                        continue
-                elif f_date and end_d < f_date:
-                    continue
-                elif t_date and start_d > t_date:
-                    continue
+                    start_d = comm_date or comp_date
+                    end_d = comp_date or comm_date
+                    if not (start_d <= t_date and end_d >= f_date): continue
+                elif f_date and (comm_date or comp_date) < f_date: continue
+                elif t_date and (comm_date or comp_date) > t_date: continue
             def _fmt_ui_dt(dt_obj, raw_val):
                 if isinstance(dt_obj, datetime): return dt_obj.strftime('%d/%m/%Y %H:%M')
                 return str(raw_val or '').strip()
