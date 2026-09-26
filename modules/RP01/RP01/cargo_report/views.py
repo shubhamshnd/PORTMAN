@@ -5,7 +5,7 @@ from flask import (
 )
 from functools import wraps
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import io
 import json
 import re 
@@ -57,6 +57,254 @@ def cargo_report_index():
         module_code='RP01',
         module_href='/module/RP01/'
     )
+
+
+# =========================================================
+# CARGO HANDLING DATA-SOURCE CUTOVER
+# =========================================================
+# 01-Apr-2026 to 30-Jun-2026 -> rp02_cargo_handling_backdated
+# 01-Jul-2026 onward          -> ORIGINAL LIVE QUERY BELOW
+# Before 01-Apr-2026         -> unavailable
+# =========================================================
+CARGO_BACKDATED_FROM = date(2026, 4, 1)
+CARGO_LIVE_FROM = date(2026, 7, 1)
+
+
+def _parse_report_date(value):
+    try:
+        return datetime.strptime(str(value).strip(), '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_number(value):
+    if value is None:
+        return 0.0
+    try:
+        return float(str(value).replace(',', '').strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _backdated_ts(column):
+    # Backdated migration stores these fields as VARCHAR.
+    return f"""
+        CASE
+            WHEN NULLIF(TRIM({column}), '') IS NULL THEN NULL
+            WHEN LOWER(TRIM({column})) IN
+                 ('inprogress', 'in progress', '-', 'na', 'n/a', 'null')
+                THEN NULL
+            WHEN TRIM({column}) ~ '^\\d{{2}}/\\d{{2}}/\\d{{4}}\\s+\\d{{2}}:\\d{{2}}:\\d{{2}}$'
+                THEN to_timestamp(TRIM({column}), 'DD/MM/YYYY HH24:MI:SS')
+            WHEN TRIM({column}) ~ '^\\d{{2}}/\\d{{2}}/\\d{{4}}\\s+\\d{{2}}:\\d{{2}}$'
+                THEN to_timestamp(TRIM({column}), 'DD/MM/YYYY HH24:MI')
+            WHEN TRIM({column}) ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}([ T]\\d{{2}}:\\d{{2}}(:\\d{{2}}(\\.\\d+)?)?)?$'
+                THEN TRIM({column})::timestamp
+            ELSE NULL
+        END
+    """
+
+
+def _fetch_backdated_rows(cur, from_date, to_date):
+    start = _parse_report_date(from_date)
+    end = _parse_report_date(to_date)
+    if not start or not end:
+        return []
+
+    start = max(start, CARGO_BACKDATED_FROM)
+    end = min(end, CARGO_LIVE_FROM - timedelta(days=1))
+    if start > end:
+        return []
+
+    commenced = _backdated_ts('discharge_commenced')
+    completed = _backdated_ts('discharge_completed')
+
+    sql = f"""
+        SELECT
+            id,
+            0 AS customer_detail_id,
+            COALESCE(NULLIF(TRIM(vessel_name), ''), '-') AS vessel_name,
+            COALESCE(NULLIF(TRIM(vessel_type), ''), '-') AS vessel_type,
+            COALESCE(NULLIF(TRIM(cargo_type), ''), '-') AS cargo_type,
+            COALESCE(NULLIF(TRIM(cargo_name), ''), '-') AS cargo_name,
+            COALESCE(NULLIF(TRIM(bl_qty_mt), ''), '0') AS bl_qty_mt,
+            COALESCE(NULLIF(TRIM(actual_discharge), ''), '0') AS actual_discharge,
+            COALESCE(NULLIF(TRIM(load_port), ''), '-') AS load_port,
+            COALESCE(NULLIF(TRIM(material_po), ''), '-') AS material_po,
+            COALESCE(NULLIF(TRIM(consignee), ''), '-') AS consignee,
+            ({commenced})::text AS discharge_commenced,
+            CASE
+                WHEN ({commenced}) IS NOT NULL AND ({completed}) IS NULL
+                    THEN 'InProgress'
+                ELSE ({completed})::text
+            END AS discharge_completed,
+            COALESCE(NULLIF(TRIM(flag), ''), '-') AS flag,
+            COALESCE(NULLIF(TRIM(invoice_number), ''), '') AS invoice_number,
+            COALESCE(NULLIF(TRIM(status), ''), '-') AS status
+        FROM rp02_cargo_handling_backdated
+        WHERE
+            ({commenced}) BETWEEN (%s::date + INTERVAL '6 hours')
+                              AND (%s::date + INTERVAL '6 hours')
+            OR
+            (({completed}) IS NOT NULL AND
+             ({completed}) BETWEEN (%s::date + INTERVAL '6 hours')
+                              AND (%s::date + INTERVAL '6 hours'))
+        ORDER BY ({commenced}) DESC NULLS LAST
+    """
+    cur.execute(sql, (start.isoformat(), end.isoformat(),
+                      start.isoformat(), end.isoformat()))
+    return cur.fetchall()
+
+
+
+def _debug_count(cur, sql, params=None):
+    """Return COUNT(*) safely for both dict and tuple cursor types."""
+    cur.execute(sql, params or ())
+    row = cur.fetchone()
+
+    if row is None:
+        return 0
+
+    # get_cursor() may use RealDictCursor / DictCursor.
+    if isinstance(row, dict):
+        if 'count' in row:
+            return int(row['count'] or 0)
+        if row:
+            return int(next(iter(row.values())) or 0)
+
+    # Normal tuple/list cursor.
+    try:
+        return int(row[0] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return 0
+
+
+def _debug_live_cargo_data(cur, from_date, to_date):
+    """Print diagnostic counts for the live MBC/MV source tables."""
+
+    print("\\n" + "=" * 90)
+    print("CARGO REPORT LIVE DATA DIAGNOSTIC")
+    print("FROM:", from_date)
+    print("TO  :", to_date)
+    print("=" * 90)
+
+    # --------------------------------------------------------
+    # MBC
+    # --------------------------------------------------------
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM mbc_discharge_port_lines
+        WHERE NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
+    """)
+    print("MBC WITH UNLOADING COMMENCED:", count)
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM mbc_discharge_port_lines
+        WHERE NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
+          AND NULLIF(TRIM(unloading_commenced), '')::timestamp >= %s::date
+          AND NULLIF(TRIM(unloading_commenced), '')::timestamp <
+              (%s::date + INTERVAL '1 day')
+    """, (from_date, to_date))
+    print("MBC COMMENCED IN SELECTED PERIOD:", count)
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM mbc_discharge_port_lines
+        WHERE NULLIF(TRIM(unloading_completed), '') IS NOT NULL
+          AND NULLIF(TRIM(unloading_completed), '')::timestamp >= %s::date
+          AND NULLIF(TRIM(unloading_completed), '')::timestamp <
+              (%s::date + INTERVAL '1 day')
+    """, (from_date, to_date))
+    print("MBC COMPLETED IN SELECTED PERIOD:", count)
+
+    # --------------------------------------------------------
+    # MV
+    # --------------------------------------------------------
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM ldud_anchorage
+        WHERE discharge_started IS NOT NULL
+    """)
+    print("MV WITH DISCHARGE STARTED:", count)
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM ldud_anchorage
+        WHERE discharge_started IS NOT NULL
+          AND discharge_started >= %s::date
+          AND discharge_started < (%s::date + INTERVAL '1 day')
+    """, (from_date, to_date))
+    print("MV STARTED IN SELECTED PERIOD:", count)
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
+        FROM ldud_anchorage
+        WHERE discharge_commenced IS NOT NULL
+          AND discharge_commenced >= %s::date
+          AND discharge_commenced < (%s::date + INTERVAL '1 day')
+    """, (from_date, to_date))
+    print("MV COMPLETED IN SELECTED PERIOD:", count)
+
+    # --------------------------------------------------------
+    # Show latest actual dates. This is useful if the counts
+    # above are zero because the live data uses another date.
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            mbc_id,
+            unloading_commenced,
+            unloading_completed
+        FROM mbc_discharge_port_lines
+        WHERE NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
+        ORDER BY NULLIF(TRIM(unloading_commenced), '')::timestamp DESC
+        LIMIT 10
+    """)
+
+    mbc_samples = cur.fetchall()
+    print("\\nLATEST MBC DATE SAMPLES:")
+    for row in mbc_samples:
+        print(row)
+
+    cur.execute("""
+        SELECT
+            ldud_id,
+            discharge_started,
+            discharge_commenced
+        FROM ldud_anchorage
+        WHERE discharge_started IS NOT NULL
+        ORDER BY discharge_started DESC
+        LIMIT 10
+    """)
+
+    mv_samples = cur.fetchall()
+    print("\\nLATEST MV DATE SAMPLES:")
+    for row in mv_samples:
+        print(row)
+
+    print("=" * 90)
+    print("END CARGO REPORT LIVE DATA DIAGNOSTIC")
+    print("=" * 90)
+
+
+def _split_dates(from_date, to_date):
+    start = _parse_report_date(from_date)
+    end = _parse_report_date(to_date)
+    if not start or not end:
+        return None, None, None, None, 'Valid From Date and To Date are required.'
+    if start < CARGO_BACKDATED_FROM:
+        return None, None, None, None, 'Reports before 01-Apr-2026 are not available.'
+    if start > end:
+        return None, None, None, None, 'From Date should not be greater than To Date.'
+
+    bd_from = start if start < CARGO_LIVE_FROM else None
+    bd_to = min(end, CARGO_LIVE_FROM - timedelta(days=1)) if bd_from else None
+    live_from = max(start, CARGO_LIVE_FROM) if end >= CARGO_LIVE_FROM else None
+    live_to = end if live_from else None
+    return bd_from, bd_to, live_from, live_to, None
 
 
 # =========================================================
@@ -484,31 +732,76 @@ def get_cargo_report():
         """
 
 
-        cur.execute(
-            query,
-            (
-                # ==========================
-                # MBC
-                # ==========================
-                from_date,
-                to_date,
-
-                from_date,
-                to_date,
-
-                # ==========================
-                # MV
-                # ==========================
-                from_date,
-                to_date,
-
-                from_date,
-                to_date
-            )
+        bd_from, bd_to, live_from, live_to, range_error = _split_dates(
+            from_date, to_date
         )
+        if range_error:
+            return jsonify({'success': False, 'message': range_error}), 400
 
+        rows = []
 
-        rows = cur.fetchall()
+        # ---------------------------------------------------------
+        # APRIL-JUNE 2026
+        # Read ONLY from rp02_cargo_handling_backdated.
+        # ---------------------------------------------------------
+        backdated_rows = []
+        if bd_from and bd_to:
+            backdated_rows = _fetch_backdated_rows(
+                cur, bd_from.isoformat(), bd_to.isoformat()
+            )
+            print(
+                "CARGO REPORT BACKDATED RANGE:",
+                bd_from, "->", bd_to,
+                "ROWS:", len(backdated_rows)
+            )
+            rows.extend(backdated_rows)
+
+        # ---------------------------------------------------------
+        # JULY 2026 ONWARD
+        # Use the ORIGINAL LIVE QUERY and ORIGINAL LIVE LOGIC.
+        # No new July-specific SQL filter is added here.
+        # ---------------------------------------------------------
+        live_rows = []
+        if live_from and live_to:
+            print("=" * 80)
+            print("CARGO REPORT LIVE RANGE")
+            print("LIVE FROM:", live_from)
+            print("LIVE TO  :", live_to)
+            print("=" * 80)
+
+            _debug_live_cargo_data(
+                cur,
+                live_from.isoformat(),
+                live_to.isoformat()
+            )
+
+            cur.execute(
+                query,
+                (
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat()
+                )
+            )
+            live_rows = cur.fetchall()
+
+            print("LIVE QUERY ROW COUNT:", len(live_rows))
+            if live_rows:
+                print("FIRST LIVE ROW:", live_rows[0])
+                print("LAST LIVE ROW :", live_rows[-1])
+            else:
+                print("!!! LIVE QUERY RETURNED ZERO ROWS !!!")
+
+            rows.extend(live_rows)
+
+        print("FINAL CARGO REPORT ROW COUNT:", len(rows))
+        print("=" * 80)
+
+        rows.sort(
+            key=lambda r: str(r.get('discharge_commenced') or ''),
+            reverse=True
+        )
 
         data = []
 
@@ -534,9 +827,7 @@ def get_cargo_report():
 
 
             raw_actual = (
-                float(row['actual_discharge'])
-                if row['actual_discharge']
-                else 0
+                _safe_number(row['actual_discharge'])
             )
 
 
@@ -571,9 +862,7 @@ def get_cargo_report():
                     row['cargo_name'] or '-',
 
                 'bl_qty_mt':
-                    float(row['bl_qty_mt'])
-                    if row['bl_qty_mt']
-                    else 0,
+                    _safe_number(row['bl_qty_mt']),
 
                 'actual_discharge':
                     actual_val,
@@ -1294,36 +1583,56 @@ def download_cargo_handling_report():
 
 
 
-        cur.execute(
-            query,
-            (
-
-                # -------------------------
-                # MBC
-                # -------------------------
-
-                from_date,
-                to_date,
-
-                from_date,
-                to_date,
-
-
-                # -------------------------
-                # MV
-                # -------------------------
-
-                from_date,
-                to_date,
-
-                from_date,
-                to_date
-
-            )
+        bd_from, bd_to, live_from, live_to, range_error = _split_dates(
+            from_date, to_date
         )
+        if range_error:
+            return jsonify({'success': False, 'message': range_error}), 400
 
+        rows = []
 
-        rows = cur.fetchall()
+        # ---------------------------------------------------------
+        # APRIL-JUNE 2026 -> BACKDATED TABLE
+        # ---------------------------------------------------------
+        if bd_from and bd_to:
+            backdated_rows = _fetch_backdated_rows(
+                cur, bd_from.isoformat(), bd_to.isoformat()
+            )
+            print(
+                "CARGO REPORT DOWNLOAD BACKDATED RANGE:",
+                bd_from, "->", bd_to,
+                "ROWS:", len(backdated_rows)
+            )
+            rows.extend(backdated_rows)
+
+        # ---------------------------------------------------------
+        # JULY 2026 ONWARD -> ORIGINAL LIVE QUERY
+        # ---------------------------------------------------------
+        if live_from and live_to:
+            print(
+                "CARGO REPORT DOWNLOAD LIVE RANGE:",
+                live_from, "->", live_to
+            )
+
+            cur.execute(
+                query,
+                (
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat(),
+                    live_from.isoformat(), live_to.isoformat()
+                )
+            )
+            live_rows = cur.fetchall()
+            print("CARGO REPORT DOWNLOAD LIVE ROW COUNT:", len(live_rows))
+            rows.extend(live_rows)
+
+        print("CARGO REPORT DOWNLOAD FINAL ROW COUNT:", len(rows))
+
+        rows.sort(
+            key=lambda r: str(r.get('discharge_commenced') or ''),
+            reverse=True
+        )
 
 
 
@@ -1588,16 +1897,12 @@ def download_cargo_handling_report():
 
 
             qty = (
-                float(row['bl_qty_mt'])
-                if row['bl_qty_mt']
-                else 0
+                _safe_number(row['bl_qty_mt'])
             )
 
 
             raw_actual = (
-                float(row['actual_discharge'])
-                if row['actual_discharge']
-                else 0
+                _safe_number(row['actual_discharge'])
             )
 
 

@@ -16,11 +16,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.1/modules/drilldown.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-<!-- WebDataRocks ↔ Highcharts connector -->
+<!-- WebDataRocks ? Highcharts connector -->
 <script src="https://cdn.webdatarocks.com/latest/webdatarocks.highcharts.js"></script>
 
 <style>
-    /* ── Page header ─────────────────────────────────────────── */
+    /* -- Page header ------------------------------------------- */
     .page-header {
         display: flex;
         align-items: center;
@@ -61,7 +61,7 @@
         text-decoration: underline;
     }
 
-    /* ── Toolbar ─────────────────────────────────────────────── */
+    /* -- Toolbar ----------------------------------------------- */
     .toolbar {
         display: flex;
         flex-wrap: wrap;
@@ -131,7 +131,7 @@
         cursor: not-allowed;
     }
 
-    /* ── Status bar ──────────────────────────────────────────── */
+    /* -- Status bar -------------------------------------------- */
     .status-bar {
         font-size: 11px;
         color: var(--text-secondary);
@@ -143,7 +143,7 @@
         color: #e74c3c;
     }
 
-    /* ── Pivot wrapper ───────────────────────────────────────── */
+    /* -- Pivot wrapper ----------------------------------------- */
     #wdr-component {
         margin-bottom: 16px;
         border: 1px solid var(--border-color);
@@ -151,7 +151,7 @@
         overflow: hidden;
     }
 
-    /* ── Chart panels ────────────────────────────────────────── */
+    /* -- Chart panels ------------------------------------------ */
     .chart-panels {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -186,7 +186,7 @@
         padding: 4px;
     }
 
-    /* ── KPI stat cards ──────────────────────────────────────── */
+    /* -- KPI stat cards ---------------------------------------- */
     .kpi-row {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -252,7 +252,7 @@
         margin-top: 2px;
     }
 
-    /* ── Chart panel settings ───────────────────────────────── */
+    /* -- Chart panel settings --------------------------------- */
     .chart-panel-header {
         display: flex;
         align-items: center;
@@ -343,7 +343,7 @@
         padding: 16px;
     }
 
-    /* ── Placeholder ─────────────────────────────────────────── */
+    /* -- Placeholder ------------------------------------------- */
     .chart-placeholder {
         display: flex;
         align-items: center;
@@ -557,7 +557,7 @@
                 font-weight:700;
                 cursor:pointer;
             ">
-            ↓ Download Excel
+            ? Download Excel
         </button>
 
     </div>
@@ -885,7 +885,7 @@ $(document).ready(function () {
 
     function validateDates(fromDate, toDate) {
 
-        const cutoffDate = '2026-05-01';
+        const cutoffDate = '2026-04-01';
 
         if (fromDate && fromDate < cutoffDate) {
 
@@ -893,8 +893,8 @@ $(document).ready(function () {
                 icon: 'warning',
                 title: 'Report Not Available',
                 html: `
-                <b>Cutoff Date:</b> 01-May-2026<br><br>
-                Reports before this date are not available.
+                <b>Cutoff Date:</b> 01-Apr-2026<br><br>
+                Reports before 01-Apr-2026 are not available.
             `,
                 confirmButtonText: 'OK',
                 confirmButtonColor: '#4a90d9',
@@ -994,7 +994,7 @@ $(document).ready(function () {
 
                 btn.prop('disabled', false);
 
-                btn.html('↓ Download Excel');
+                btn.html('? Download Excel');
 
             });;
     });

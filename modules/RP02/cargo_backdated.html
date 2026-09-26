@@ -1,0 +1,346 @@
+﻿{% extends "base.html" %}
+{% block title %}Backdated Cargo Handling - RP02{% endblock %}
+{% block content %}
+<div class="module-header">
+    <h2>Cargo Handling — Backdated Upload</h2>
+    <span class="module-code">RP02</span>
+</div>
+
+<div style="padding:14px;max-width:1300px;">
+
+    <div style="margin-bottom:14px;font-size:13px;">
+        Current dataset:
+        <b id="cb-count">{{ status.count }}</b> records
+        {% if status.vessels %}<span style="color:#718096;">— {{ status.vessels }} unique vessels</span>{% endif %}
+        {% if status.uploaded_at %}<span style="color:#718096;">— last upload {{ status.uploaded_at }}</span>{% endif %}
+    </div>
+
+    {% if can_upload %}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+        <a class="btn" href="/api/module/RP02/cargo-backdated/template?format=excel"
+           style="background:#2b6cb0;color:white;padding:8px 14px;border-radius:4px;text-decoration:none;font-size:13px;display:inline-flex;align-items:center;gap:6px;">
+           ⬇ Template (Excel)
+        </a>
+        <a class="btn" href="/api/module/RP02/cargo-backdated/template?format=csv"
+           style="background:#3182ce;color:white;padding:8px 14px;border-radius:4px;text-decoration:none;font-size:13px;display:inline-flex;align-items:center;gap:6px;">
+           ⬇ Template (CSV)
+        </a>
+        <input type="file" id="cb-file" accept=".csv,.xlsx" style="font-size:13px;">
+        <button class="btn" onclick="cbPreview()" style="background:#805ad5;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;">
+            Preview
+        </button>
+        <button class="btn" id="cb-apply-replace" onclick="cbApply('replace')" disabled
+                style="background:#e53e3e;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;opacity:0.5;">
+            Apply (Replace All)
+        </button>
+        <button class="btn" id="cb-apply-append" onclick="cbApply('append')" disabled
+                style="background:#38a169;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;opacity:0.5;">
+            Apply (Append)
+        </button>
+        <a href="/module/RP02/cargo-report/" target="_blank"
+           style="margin-left:auto;color:#3182ce;font-size:13px;text-decoration:none;font-weight:600;">
+           Open Cargo Report &rarr;
+        </a>
+    </div>
+    {% else %}
+    <div style="color:#718096;font-size:12px;margin-bottom:16px;">You have read-only access — uploading requires add/edit permission on RP02.</div>
+    {% endif %}
+
+    <div id="cb-result" style="font-size:13px;"></div>
+
+    <div style="margin-top:24px;border-top:1px solid #e2e8f0;padding-top:16px;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+            <b style="font-size:14px;">Stored Backdated Cargo Handling Records</b>
+            <span style="color:#718096;font-size:12px;">— type in any column header box to search{% if can_upload %}; edit any cell to save{% endif %}.</span>
+            <button class="btn" onclick="cbGrid && cbGrid.clearHeaderFilter()" style="margin-left:auto;background:#edf2f7;color:#2d3748;border:1px solid #cbd5e0;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:13px;">Clear filters</button>
+            <button class="btn" onclick="cbReloadGrid()" style="background:#edf2f7;color:#2d3748;border:1px solid #cbd5e0;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:13px;">↻ Refresh</button>
+        </div>
+        <div id="cb-grid"></div>
+        <div id="cb-grid-status" style="font-size:11px;color:#718096;margin-top:6px;"></div>
+    </div>
+</div>
+
+<script>
+try { addToRecent('RP02', 'Finance Reports'); } catch(e) {}
+
+const cbCanUpload = {{ 'true' if can_upload else 'false' }};
+const cbFields = {{ fields | tojson }};      // [[field, header], ...]
+let cbValid = false;
+
+function cbEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function cbFile() {
+    const f = document.getElementById('cb-file').files[0];
+    if (!f) { alert('Choose a file first.'); return null; }
+    return f;
+}
+
+async function cbPreview() {
+    const f = cbFile(); if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    document.getElementById('cb-result').innerHTML = 'Parsing and validating file…';
+    try {
+        const res = await fetch('/api/module/RP02/cargo-backdated/preview', {
+            method: 'POST',
+            body: fd
+        });
+
+        // Read the response as text first. Flask may return an HTML
+        // Internal Server Error page instead of JSON.
+        const responseText = await res.text();
+
+        let d;
+        try {
+            d = JSON.parse(responseText);
+        } catch (jsonErr) {
+            console.error('Preview endpoint returned non-JSON:', responseText);
+
+            document.getElementById('cb-result').innerHTML = `
+                <div style="
+                    background:#fed7d7;
+                    color:#c53030;
+                    padding:10px 14px;
+                    border-radius:4px;
+                    white-space:pre-wrap;
+                    max-height:350px;
+                    overflow:auto;
+                ">
+                    <b>Server Error (${res.status})</b><br><br>
+                    ${cbEsc(responseText.substring(0, 5000))}
+                </div>
+            `;
+
+            cbValid = false;
+
+            const btnReplace = document.getElementById('cb-apply-replace');
+            const btnAppend = document.getElementById('cb-apply-append');
+
+            if (btnReplace) {
+                btnReplace.disabled = true;
+                btnReplace.style.opacity = '0.5';
+            }
+
+            if (btnAppend) {
+                btnAppend.disabled = true;
+                btnAppend.style.opacity = '0.5';
+            }
+
+            return;
+        }
+
+        if (!res.ok) {
+            document.getElementById('cb-result').innerHTML = `
+                <div style="
+                    background:#fed7d7;
+                    color:#c53030;
+                    padding:10px 14px;
+                    border-radius:4px;
+                ">
+                    <b>Preview failed (${res.status})</b><br>
+                    ${cbEsc(d.error || d.message || 'Server returned an error.')}
+                </div>
+            `;
+            cbValid = false;
+            return;
+        }
+
+        if (d.error) {
+            document.getElementById('cb-result').innerHTML = `<span style="color:#c53030">${cbEsc(d.error)}</span>`;
+            return;
+        }
+
+        let html = `<div style="margin-bottom:8px;">Parsed <b>${d.total_rows}</b> data row(s).</div>`;
+        if (d.format_errors && d.format_errors.length) {
+            cbValid = false;
+            html += `<div style="background:#fed7d7;color:#c53030;padding:8px 12px;border-radius:4px;margin-bottom:10px;">
+                <b>${d.format_errors.length} format error(s)</b> — fix these before applying:<ul style="margin:6px 0 0;">`
+                + d.format_errors.slice(0, 50).map(e => `<li>Row ${e.row}: ${cbEsc(e.message)}</li>`).join('') + `</ul></div>`;
+        } else {
+            cbValid = d.total_rows > 0;
+            html += cbValid
+                ? `<div style="background:#c6f6d5;color:#276749;padding:8px 12px;border-radius:4px;margin-bottom:10px;">✓ No format errors — choose <b>Apply (Replace All)</b> or <b>Apply (Append)</b>.</div>`
+                : `<div style="background:#fed7d7;color:#c53030;padding:8px 12px;border-radius:4px;margin-bottom:10px;">No data rows found in the file.</div>`;
+        }
+
+        if (d.sample && d.sample.length) {
+            html += `<div style="color:#718096;font-size:12px;margin:10px 0 4px;">First ${d.sample.length} row(s) as they will be stored:</div>`
+                + `<div style="overflow-x:auto;"><table style="font-size:11px;border-collapse:collapse;width:100%;">
+                     <tr style="background:#edf2f7;">` + cbFields.map(([,t]) =>
+                     `<th style="border:1px solid #cbd5e0;padding:4px 8px;white-space:nowrap;text-align:left;">${cbEsc(t)}</th>`).join('') + `</tr>`
+                + d.sample.map(r => `<tr>` + cbFields.map(([f]) =>
+                     `<td style="border:1px solid #cbd5e0;padding:4px 8px;white-space:nowrap;">${cbEsc(r[f])}</td>`).join('') + `</tr>`).join('')
+                + `</table></div>`;
+        }
+
+        document.getElementById('cb-result').innerHTML = html;
+        const btnReplace = document.getElementById('cb-apply-replace');
+        const btnAppend = document.getElementById('cb-apply-append');
+        if (btnReplace) {
+            btnReplace.disabled = !cbValid;
+            btnReplace.style.opacity = cbValid ? '1' : '0.5';
+        }
+        if (btnAppend) {
+            btnAppend.disabled = !cbValid;
+            btnAppend.style.opacity = cbValid ? '1' : '0.5';
+        }
+    } catch(err) {
+        document.getElementById('cb-result').innerHTML = `<span style="color:#c53030">Network error: ${cbEsc(err.message)}</span>`;
+    }
+}
+
+async function cbApply(mode) {
+    if (!cbValid) return;
+    const f = cbFile(); if (!f) return;
+    const isReplace = mode === 'replace';
+    const confirmMsg = isReplace
+        ? 'WARNING: This will DELETE all existing backdated cargo records and replace them with this file. Continue?'
+        : 'This will APPEND the records from this file to the existing dataset. Continue?';
+    if (!confirm(confirmMsg)) return;
+
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('mode', mode);
+
+    try {
+        const res = await fetch('/api/module/RP02/cargo-backdated/apply', {
+            method: 'POST',
+            body: fd
+        });
+
+        const responseText = await res.text();
+
+        let d;
+        try {
+            d = JSON.parse(responseText);
+        } catch (jsonErr) {
+            console.error('Apply endpoint returned non-JSON:', responseText);
+
+            alert(
+                `Server Error (${res.status})\\n\\n` +
+                responseText.substring(0, 3000)
+            );
+            return;
+        }
+
+        if (!res.ok) {
+            alert(
+                d.error ||
+                d.message ||
+                `Upload failed with HTTP ${res.status}`
+            );
+            return;
+        }
+
+        if (d.error) {
+            alert(d.error + (d.format_errors ? '\n' + d.format_errors.slice(0, 10).map(e => `Row ${e.row}: ${e.message}`).join('\n') : ''));
+            return;
+        }
+        document.getElementById('cb-result').innerHTML =
+            `<div style="background:#c6f6d5;color:#276749;padding:10px 14px;border-radius:4px;">
+                ✓ Successfully ${isReplace ? 'replaced dataset' : 'appended data'} — <b>${d.inserted}</b> row(s) saved.
+            </div>`;
+        cbReloadGrid();
+    } catch(err) {
+        alert('Upload failed (network error).');
+    }
+}
+
+let cbGrid = null;
+
+async function cbSaveCell(cell) {
+    const row = cell.getRow().getData();
+    try {
+        const res = await fetch('/api/module/RP02/cargo-backdated/row/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(row)
+        });
+        const d = await res.json();
+        if (d.error) {
+            alert('Save failed: ' + d.error);
+            cell.restoreOldValue();
+        }
+    } catch (e) {
+        alert('Save failed (network error).');
+        cell.restoreOldValue();
+    }
+}
+
+function cbDeleteRow(cell) {
+    const row = cell.getRow();
+    const data = row.getData();
+    if (!confirm(`Delete record for vessel "${data.vessel_name || 'Selected'}"?`)) return;
+    fetch('/api/module/RP02/cargo-backdated/row/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: data.id})
+    }).then(r => r.json()).then(d => {
+        if (d.error) { alert(d.error); return; }
+        row.delete();
+        const cnt = document.getElementById('cb-count');
+        if (cnt) cnt.textContent = Math.max(0, (parseInt(cnt.textContent, 10) || 1) - 1);
+    });
+}
+
+function cbInitGrid() {
+    const cols = cbFields.map(([f, t]) => ({
+        title: t,
+        field: f,
+        width: Math.max(100, Math.min(220, t.length * 9 + 30)),
+        frozen: f === 'vessel_name',
+        editor: cbCanUpload ? 'input' : false,
+    }));
+
+    if (cbCanUpload) {
+        cols.push({
+            title: '',
+            field: '_del',
+            width: 50,
+            hozAlign: 'center',
+            headerSort: false,
+            headerFilter: false,
+            formatter: () => '<button style="background:#fc8181;color:white;border:none;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;">X</button>',
+            cellClick: (e, cell) => cbDeleteRow(cell)
+        });
+    }
+
+    cbGrid = new Tabulator('#cb-grid', {
+        layout: 'fitDataFill',
+        height: '460px',
+        placeholder: 'No backdated cargo handling data uploaded yet.',
+        pagination: true,
+        paginationMode: 'remote',
+        paginationSize: 50,
+        paginationSizeSelector: [50, 100, 200],
+        filterMode: 'remote',
+        columnDefaults: {headerSort: false, headerFilter: 'input'},
+        ajaxURL: '/api/module/RP02/cargo-backdated/rows',
+        ajaxParams: function () {
+            return {colfilters: JSON.stringify(cbGrid ? cbGrid.getHeaderFilters() : [])};
+        },
+        ajaxResponse: (url, params, response) => {
+            const statusEl = document.getElementById('cb-grid-status');
+            if (statusEl) statusEl.textContent = `${response.total} record(s) found`;
+            const cntEl = document.getElementById('cb-count');
+            if (cntEl && response.total !== undefined) cntEl.textContent = response.total;
+            return response;
+        },
+        columns: cols,
+    });
+
+    if (cbCanUpload) cbGrid.on('cellEdited', cbSaveCell);
+    if (localStorage.getItem('theme') === 'dark') {
+        document.getElementById('cb-grid').classList.add('tabulator-dark');
+    }
+}
+
+function cbReloadGrid() {
+    if (cbGrid) cbGrid.replaceData(); else cbInitGrid();
+}
+
+document.addEventListener('DOMContentLoaded', cbInitGrid);
+</script>
+{% endblock %}
