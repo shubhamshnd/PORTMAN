@@ -4780,7 +4780,7 @@ def daily_progress_report_excel():
         caption_font = Font(name='Calibri', bold=False, size=16)
         value_font = Font(name='Calibri', bold=False, size=12)
         section_font = Font(name='Calibri', bold=True, size=16, color='FF0000')
-        delay_font = Font(name='Calibri', bold=True, size=16, color='000000')
+        delay_font = Font(name='Calibri', bold=True, size=10, color='000000')
         TALL_ROW_HEIGHT = 60
         header_font = Font(name='Calibri', bold=True, size=13)
         data_font = Font(name='Calibri', bold=False, size=11)
@@ -4828,6 +4828,9 @@ def daily_progress_report_excel():
                             fill=yellow_fill, align=align)
 
         def data(row, col, val, align=center, span=1):
+            if span > 1:
+                ws.merge_cells(start_row=row, start_column=col,
+                                end_row=row, end_column=col + span - 1)
             c = ws.cell(row, col, val if val not in (None, '') else '')
             c.font = data_font
             c.alignment = align
@@ -4869,30 +4872,41 @@ def daily_progress_report_excel():
         # TITLE BAR
         # =====================================================
 
-        ws.merge_cells('A1:W1')
-        t = ws.cell(1, 1, 'DAILY REPORT OF JSW DHARAMTAR PORT OPERATIONS')
-        t.font = title_font
-        t.alignment = center
-        t.fill = yellow_fill
-        t.border = border
-        for c in range(2, 24):
-            cc = ws.cell(1, c)
-            cc.fill = yellow_fill
-            cc.border = border
-        caption(1, 24, 'Document No.OPE/0100/F/10', span=6, font=title_font, align=center)
+        # ws.merge_cells('A1:W1')
+        # t = ws.cell(1, 1, 'DAILY REPORT OF JSW DHARAMTAR PORT OPERATIONS')
+        # t.font = title_font
+        # t.alignment = center
+        # t.fill = yellow_fill
+        # t.border = border
+        # for c in range(2, 24):
+        #     cc = ws.cell(1, c)
+        #     cc.fill = yellow_fill
+        #     cc.border = border
+        # caption(1, 24, 'Document No.OPE/0100/F/10', span=6, font=title_font, align=center)
+        caption(1, 1, '', span=2)
+        caption(1, 3, 'DAILY REPORT OF JSW DHARAMTAR PORT OPERATIONS',
+                span=6, font=title_font, fill=yellow_fill, align=center)
+        caption(1, 9, 'Document No.OPE/0100/F/10',
+                span=3, font=header_font, align=center)
 
         # =====================================================
         # REPORT DATE + DOCUMENT CONTROL ROW
         # =====================================================
 
         row_no = 2
-        caption(row_no, 1, 'Report Date :', font=title_font)
-        value(row_no, 16,
+        # caption(row_no, 1, 'Report Date :', font=title_font)
+        # value(row_no, 16,
+        caption(row_no, 1, 'Report Date :', font=header_font, align=center)
+        value(row_no, 2,
               report_dt.strftime('%d/%m/%Y') + ' @ 06:00 Hrs',
-              span=6, align=center)
-        caption(row_no, 22, 'Rev. No: 00', span=2, font=title_font, align=center)
-        caption(row_no, 24, 'Issue No: 01', span=4, font=title_font, align=center)
-        caption(row_no, 28, 'Issue Date:10.12.2022', span=6, font=title_font, align=left)
+        #       span=6, align=center)
+        # caption(row_no, 22, 'Rev. No: 00', span=2, font=title_font, align=center)
+        # caption(row_no, 24, 'Issue No: 01', span=4, font=title_font, align=center)
+        # caption(row_no, 28, 'Issue Date:10.12.2022', span=6, font=title_font, align=left)
+                span=2, font=header_font, align=center)
+        caption(row_no, 4, 'Rev. No: 00', span=2, font=header_font, align=center)
+        caption(row_no, 6, 'Issue No: 01', span=3, font=header_font, align=center)
+        caption(row_no, 9, 'Issue Date:10.12.2022', span=3, font=header_font, align=center)
 
         row_no = 3
 
@@ -5210,7 +5224,7 @@ LEFT JOIN ldud_vessel_operations lco
 
         matrix_header_row = row_no
         section(matrix_header_row, 1, 'Date / Day')
-        caption(matrix_header_row, 2, 'Total MV Disch', font=header_font)
+        header(matrix_header_row, 2, 'Total MV Disch')
 
         for v in vessels:
             c = vessel_col_map[v['id']]
@@ -5259,16 +5273,16 @@ LEFT JOIN ldud_vessel_operations lco
         # TOTAL ROW
         # =====================================================
 
-        # IMPORTANT:
-        # Column B (Total MV Disch) must remain BLANK.
-        # TOTAL is shown only under each vessel.
+        # # IMPORTANT:
+        # # Column B (Total MV Disch) must remain BLANK.
+        # # TOTAL is shown only under each vessel.
 
-        caption(
-            matrix_row,
-            2,
-            '',
-            font=header_font
-        )
+        # caption(
+        #     matrix_row,
+        #     2,
+        #     '',
+        #     font=header_font
+        # )
 
         for v in vessels:
 
@@ -5306,13 +5320,13 @@ LEFT JOIN ldud_vessel_operations lco
         # BALANCE ON BOARD
         # =====================================================
 
-        # Keep column B BLANK
-        caption(
-            matrix_row,
-            2,
-            '',
-            font=header_font
-        )
+        # # Keep column B BLANK
+        # caption(
+        #     matrix_row,
+        #     2,
+        #     '',
+        #     font=header_font
+        # )
 
         for v in vessels:
 
@@ -5338,14 +5352,17 @@ LEFT JOIN ldud_vessel_operations lco
             data(
                 matrix_row,
                 c + 1,
-                balance
-            )
+            #     balance
+            # )
 
-            data(
-                matrix_row,
-                c + 2,
-                ''
+            # data(
+            #     matrix_row,
+            #     c + 2,
+            #     ''
+                            balance,
+                span=2
             )
+            
 
         matrix_row += 1
 
@@ -5355,12 +5372,12 @@ LEFT JOIN ldud_vessel_operations lco
         # =====================================================
 
         # Keep column B BLANK
-        caption(
-            matrix_row,
-            2,
-            '',
-            font=header_font
-        )
+        # caption(
+        #     matrix_row,
+        #     2,
+        #     '',
+        #     font=header_font
+        # )
 
         for v in vessels:
 
@@ -5378,9 +5395,9 @@ LEFT JOIN ldud_vessel_operations lco
             if total_ww > 0:
 
                 avg_rate = round(
-                    vessel_totals[v['id']] / total_ww,
+                    (vessel_totals[v['id']] / total_ww),
                     2
-                )
+                ) * 24
 
             else:
 
@@ -5390,13 +5407,15 @@ LEFT JOIN ldud_vessel_operations lco
             data(
                 matrix_row,
                 c + 1,
-                avg_rate
-            )
+            #     avg_rate
+            # )
 
-            data(
-                matrix_row,
-                c + 2,
-                ''
+            # data(
+            #     matrix_row,
+            #     c + 2,
+            #     ''
+            avg_rate,
+                span=2
             )
 
         matrix_row += 1
@@ -5406,13 +5425,13 @@ LEFT JOIN ldud_vessel_operations lco
         # HOOKS AVAILABLE
         # =====================================================
 
-        # Keep column B BLANK
-        caption(
-            matrix_row,
-            2,
-            '',
-            font=header_font
-        )
+        # # Keep column B BLANK
+        # caption(
+        #     matrix_row,
+        #     2,
+        #     '',
+        #     font=header_font
+        # )
 
         for v in vessels:
 
@@ -5428,13 +5447,15 @@ LEFT JOIN ldud_vessel_operations lco
             data(
                 matrix_row,
                 c + 1,
-                ''
-            )
+            #     v.get('hooks_available') or 4
+            # )
 
-            data(
-                matrix_row,
-                c + 2,
-                ''
+            # data(
+            #     matrix_row,
+            #     c + 2,
+            #     ''
+            v.get('hooks_available') or 4,
+                span=2
             )
 
         matrix_row += 1
@@ -5897,9 +5918,36 @@ LEFT JOIN ldud_vessel_operations lco
                     header(cname_row, cur_col, ccat)
                     cur_col += 1
 
-            # "Total" / "Total - This Month" header columns
-            header(cname_row, total_col, 'Total')
-            header(cname_row, month_total_col, 'Total - This Month')
+            # "Total" / "Total - This Month" header columns (vertically merged across type_row & cname_row)
+            ws.merge_cells(start_row=type_row, start_column=total_col,
+                            end_row=cname_row, end_column=total_col)
+            for r in (type_row, cname_row):
+                c = ws.cell(r, total_col)
+                c.fill = yellow_fill
+                c.border = border
+            cell = ws.cell(type_row, total_col, 'Total')
+            cell.font = header_font
+            cell.alignment = center
+
+            # ws.merge_cells(start_row=type_row, start_column=month_total_col,
+            #                 end_row=cname_row, end_column=month_total_col)
+            # for r in (type_row, cname_row):
+            #     c = ws.cell(r, month_total_col)
+            #     c.fill = yellow_fill
+            #     c.border = border
+            # cell = ws.cell(type_row, month_total_col, 'Total - This Month')
+            # cell.font = header_font
+            # cell.alignment = center
+            
+            ws.merge_cells(start_row=type_row, start_column=month_total_col,
+                            end_row=cname_row, end_column=month_total_col)
+            for r in (type_row, cname_row):
+                c = ws.cell(r, month_total_col)
+                c.fill = yellow_fill
+                c.border = border
+            cell = ws.cell(type_row, month_total_col, 'Total - This Month')
+            cell.font = header_font
+            cell.alignment = center
 
             row_no = cname_row + 1
             for equipment, qty_map in equipment_rows.items():
@@ -6026,35 +6074,72 @@ LEFT JOIN ldud_vessel_operations lco
         def str_to_disp(v):
             return _parse_flexible(v, '%d-%m-%Y : %H:%M')
 
-        section(row_no, 1, "MBC'S DISCHARGE COMPLETED ", span=9)
-        row_no += 1
+        # -----------------------------------------------------
+        # TIDE TABLE DATA
+        # -----------------------------------------------------
+        cur.execute("""
+            SELECT tide_datetime, tide_meters
+            FROM tide_master
+            WHERE
+                NULLIF(TRIM(tide_datetime), '') IS NOT NULL
+                AND DATE(NULLIF(TRIM(tide_datetime), '')::timestamp) = %s
+            ORDER BY NULLIF(TRIM(tide_datetime), '')::timestamp
+        """, (report_date,))
+
+        tide_rows = cur.fetchall()
+
+        mbc_start_row = row_no
+
         headers = ['MBC Name', 'Cargo', 'Source', 'Qty', 'Arrived at Jetty',
                    'Unloading / Loading   Commence', 'Cleaning Start',
-                   'Unloading / Loading   Completed', 'C/off from Jetty',
-                   'Total MV']
+                   'Unloading / Loading   Completed', 'C/off from Jetty']
+        tide_headers = ['Type', 'Time', 'Mtrs']
+
+        # Titles side by side (MBC at Col 1 / A, Tide Table at Col 11 / K)
+        section(mbc_start_row, 1, "MBC'S DISCHARGE COMPLETED ", span=len(headers))
+        section(mbc_start_row, 11, "Tide Table", span=len(tide_headers), align=center)
+
         for i, h in enumerate(headers):
-            header(row_no, 1 + i, h)
-        row_no += 1
+            header(mbc_start_row + 1, 1 + i, h)
+        for i, th in enumerate(tide_headers):
+            header(mbc_start_row + 1, 11 + i, th)
+
+        # MBC Data rows (columns 1 - 9)
         if not mbc_completed:
-            ws.merge_cells(start_row=row_no, start_column=1, end_row=row_no, end_column=len(headers))
-            caption(row_no, 1, 'No records for this window', span=len(headers))
-            row_no += 1
-        for r in mbc_completed:
-            # Total MV keyed off whichever date the row actually falls
-            # on for this report: prefer completed date, else commenced.
-            mv_source = r['unloading_completed'] or r['unloading_commenced']
-            vals_row = [
-                r['mbc_name'] or '', r['cargo_name'] or '', r['load_port'] or '',
-                int(r['bl_quantity'] or 0), str_to_disp(r['vessel_arrival_port']),
-                str_to_disp(r['unloading_commenced']), str_to_disp(r['cleaning_commenced']),
-                str_to_disp(r['unloading_completed']),
-                r['sailed_out_load_port'].strftime('%d-%m-%Y : %H:%M') if r['sailed_out_load_port'] else '',
-                total_mv_for(mv_source),
-            ]
-            for i, v2 in enumerate(vals_row):
-                data(row_no, 1 + i, v2)
-            row_no += 1
-        row_no += 1
+            ws.merge_cells(start_row=mbc_start_row + 2, start_column=1, end_row=mbc_start_row + 2, end_column=len(headers))
+            caption(mbc_start_row + 2, 1, '', span=len(headers))
+        else:
+            for r_idx, r in enumerate(mbc_completed):
+                curr_row = mbc_start_row + 2 + r_idx
+                vals_row = [
+                    r['mbc_name'] or '', r['cargo_name'] or '', r['load_port'] or '',
+                    int(r['bl_quantity'] or 0), str_to_disp(r['vessel_arrival_port']),
+                    str_to_disp(r['unloading_commenced']), str_to_disp(r['cleaning_commenced']),
+                    str_to_disp(r['unloading_completed']),
+                    r['sailed_out_load_port'].strftime('%d-%m-%Y : %H:%M') if r['sailed_out_load_port'] else '',
+                ]
+                for i, v2 in enumerate(vals_row):
+                    data(curr_row, 1 + i, v2)
+
+        # Tide Data rows (columns 11 - 13: K, L, M)
+        if not tide_rows:
+            ws.merge_cells(start_row=mbc_start_row + 2, start_column=11, end_row=mbc_start_row + 2, end_column=13)
+            caption(mbc_start_row + 2, 11, '', span=3)
+        else:
+            heights = [float(r['tide_meters'] or 0) for r in tide_rows]
+            current = 'HW' if len(heights) >= 2 and heights[0] > heights[1] else 'HW'
+            for t_idx, r in enumerate(tide_rows):
+                curr_row = mbc_start_row + 2 + t_idx
+                time_disp = _parse_flexible(r['tide_datetime'], '%H:%M')
+                data(curr_row, 11, current, align=left)
+                data(curr_row, 12, time_disp)
+                data(curr_row, 13, float(r['tide_meters'] or 0))
+                current = 'LW' if current == 'HW' else 'HW'
+
+        mbc_count = len(mbc_completed) if mbc_completed else 1
+        tide_count = len(tide_rows) if tide_rows else 1
+        row_no = mbc_start_row + 2 + max(mbc_count, tide_count) + 1
+
 
         # =====================================================
         # VESSELS / MBC — ARRIVED, EXPECTED
@@ -6070,7 +6155,7 @@ LEFT JOIN ldud_vessel_operations lco
             if not rows:
                 ws.merge_cells(start_row=row_no, start_column=1,
                                 end_row=row_no, end_column=len(headers))
-                caption(row_no, 1, 'No records for this window', span=len(headers))
+                caption(row_no, 1, '', span=len(headers))
                 row_no += 1
             for idx, r in enumerate(rows, start=1):
                 data(row_no, 1, idx)
@@ -6241,37 +6326,37 @@ LEFT JOIN ldud_vessel_operations lco
         # TIDE TABLE
         # =====================================================
 
-        cur.execute("""
-            SELECT tide_datetime, tide_meters
-            FROM tide_master
-            WHERE
-                NULLIF(TRIM(tide_datetime), '') IS NOT NULL
-                AND DATE(NULLIF(TRIM(tide_datetime), '')::timestamp) = %s
-            ORDER BY NULLIF(TRIM(tide_datetime), '')::timestamp
-        """, (report_date,))
+        # cur.execute("""
+        #     SELECT tide_datetime, tide_meters
+        #     FROM tide_master
+        #     WHERE
+        #         NULLIF(TRIM(tide_datetime), '') IS NOT NULL
+        #         AND DATE(NULLIF(TRIM(tide_datetime), '')::timestamp) = %s
+        #     ORDER BY NULLIF(TRIM(tide_datetime), '')::timestamp
+        # """, (report_date,))
 
-        tide_rows = cur.fetchall()
+        # tide_rows = cur.fetchall()
 
-        caption(row_no, 1, 'Tide Table', span=3, font=header_font)
-        row_no += 1
-        header(row_no, 1, 'Type'); header(row_no, 2, 'Time'); header(row_no, 3, 'Mtrs')
-        row_no += 1
+        # caption(row_no, 1, 'Tide Table', span=3, font=header_font)
+        # row_no += 1
+        # header(row_no, 1, 'Type'); header(row_no, 2, 'Time'); header(row_no, 3, 'Mtrs')
+        # row_no += 1
 
-        if tide_rows:
-            heights = [float(r['tide_meters'] or 0) for r in tide_rows]
-            current = 'HW' if len(heights) >= 2 and heights[0] > heights[1] else 'HW'
-            for r in tide_rows:
-                time_disp = _parse_flexible(r['tide_datetime'], '%H:%M')
-                data(row_no, 1, current, align=left)
-                data(row_no, 2, time_disp)
-                data(row_no, 3, float(r['tide_meters'] or 0))
-                current = 'LW' if current == 'HW' else 'HW'
-                row_no += 1
-        else:
-            ws.merge_cells(start_row=row_no, start_column=1, end_row=row_no, end_column=3)
-            caption(row_no, 1, 'No tide data for this date', span=3)
-            row_no += 1
-        row_no += 1
+        # if tide_rows:
+        #     heights = [float(r['tide_meters'] or 0) for r in tide_rows]
+        #     current = 'HW' if len(heights) >= 2 and heights[0] > heights[1] else 'HW'
+        #     for r in tide_rows:
+        #         time_disp = _parse_flexible(r['tide_datetime'], '%H:%M')
+        #         data(row_no, 1, current, align=left)
+        #         data(row_no, 2, time_disp)
+        #         data(row_no, 3, float(r['tide_meters'] or 0))
+        #         current = 'LW' if current == 'HW' else 'HW'
+        #         row_no += 1
+        # else:
+        #     ws.merge_cells(start_row=row_no, start_column=1, end_row=row_no, end_column=3)
+        #     caption(row_no, 1, '', span=3)
+        #     row_no += 1
+        # row_no += 1
 
         # =====================================================
         # VESSELS COMPLETED FOR THE MONTH
@@ -6347,16 +6432,18 @@ LEFT JOIN ldud_vessel_operations lco
 
         month_label = report_dt.strftime('%B')
 
-        section(row_no, 1, f'Vessel Completed for The Month {month_label}', span=9)
-        row_no += 1
+        # section(row_no, 1, f'Vessel Completed for The Month {month_label}', span=9)
+        # row_no += 1
         headers = ['SR.NO.', 'M.Vessel Name', 'Cargo ', 'B/L Qty. (MT)', 'Load  Port',
                    'Discharge Commence', 'Discharge Completed', 'Time Taken (Hrs)']
+        section(row_no, 1, f'Vessel Completed for The Month {month_label}', span=len(headers))
+        row_no += 1
         for i, h in enumerate(headers):
             header(row_no, 1 + i, h)
         row_no += 1
         if not completed_rows:
             ws.merge_cells(start_row=row_no, start_column=1, end_row=row_no, end_column=len(headers))
-            caption(row_no, 1, 'No records for this window', span=len(headers))
+            caption(row_no, 1, '', span=len(headers))
             row_no += 1
         for idx, r in enumerate(completed_rows, start=1):
             data(row_no, 1, idx)
