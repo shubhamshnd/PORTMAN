@@ -573,10 +573,14 @@ def _build_report(selected_date):
         # As per SCM:
         #     GAP = SCM/Outlook in Outlook - MTD
         #
-        # Do not allow a negative remaining quantity.
-        gap_abp = max(abp - actual_mtd, 0.0)
-        gap_scm = max(scm - actual_mtd, 0.0)
+        # GAP = monthly target/outlook - MTD actual.
+        # Keep negative GAP values when actual MTD is higher than the target.
+        # Do NOT clamp negative values to zero.
+        gap_abp = abp - actual_mtd
+        gap_scm = scm - actual_mtd
 
+        # Asking Rate is calculated from the GAP, so a negative GAP
+        # must also produce a negative Asking Rate.
         asking_abp = (
             gap_abp / balance_days
             if balance_days > 0

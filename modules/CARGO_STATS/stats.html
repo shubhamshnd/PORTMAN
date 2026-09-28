@@ -2418,8 +2418,10 @@ function receiptBuildRows(rawRows) {
         });
     });
 
+    /* Keep receipt dates in the same order as Stock / Production:
+       latest date first (descending). */
     return Object.values(byDate).sort(
-        (a, b) => String(a.date).localeCompare(String(b.date))
+        (a, b) => String(b.date || "").localeCompare(String(a.date || ""))
     );
 }
 
@@ -2430,6 +2432,59 @@ function receiptSum(rows, field, predicate) {
         }
         return sum;
     }, 0);
+}
+
+function formatReceiptDateForEdit(value) {
+    const iso = String(value || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        return iso;
+    }
+
+    const parts = iso.split("-");
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
+function parseReceiptDateInput(value) {
+    const text = String(value || "").trim();
+
+    // Accept DD-MM-YYYY, DD/MM/YYYY, or YYYY-MM-DD.
+    let match = text.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/);
+    if (match) {
+        const day = match[1];
+        const month = match[2];
+        const year = match[3];
+
+        const d = new Date(Number(year), Number(month) - 1, Number(day));
+        if (
+            d.getFullYear() !== Number(year) ||
+            d.getMonth() !== Number(month) - 1 ||
+            d.getDate() !== Number(day)
+        ) {
+            return null;
+        }
+
+        return `${year}-${month}-${day}`;
+    }
+
+    match = text.match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})$/);
+    if (match) {
+        const year = match[1];
+        const month = match[2];
+        const day = match[3];
+
+        const d = new Date(Number(year), Number(month) - 1, Number(day));
+        if (
+            d.getFullYear() !== Number(year) ||
+            d.getMonth() !== Number(month) - 1 ||
+            d.getDate() !== Number(day)
+        ) {
+            return null;
+        }
+
+        return `${year}-${month}-${day}`;
+    }
+
+    return null;
 }
 
 function receiptRender(section) {
@@ -2581,11 +2636,21 @@ function receiptRender(section) {
      * Existing rows are identified by database ID first, so changing
      * the date does not break the link to the stored record.
      */
+    $(table).off("focus.receiptDate").on("focus.receiptDate", ".receipt-date-input", function() {
+        // Select the complete date so the user can type a new date at once.
+        this.select();
+    });
+
     $(table).off("change.receiptDate").on("change.receiptDate", ".receipt-date-input", function() {
         const tr = this.closest("tr");
         if (!tr) return;
 
         const oldDate = tr.dataset.date;
+        /*
+         * Keep the receipt date input exactly like Consumption/Stock/Production:
+         * native HTML date input = calendar picker + keyboard date editing.
+         * The browser returns the value as YYYY-MM-DD.
+         */
         const newDate = String(this.value || "").slice(0, 10);
 
         const row = rows.find(r =>
@@ -2597,6 +2662,11 @@ function receiptRender(section) {
 
         if (!newDate) {
             this.value = String(row.date || "").slice(0, 10);
+            setStatus(
+                section,
+                "Invalid date. Please select or enter a valid date.",
+                false
+            );
             return;
         }
 
@@ -2613,9 +2683,11 @@ function receiptRender(section) {
 
         row.date = newDate;
         tr.dataset.date = newDate;
+        this.value = newDate;
 
+        /* Keep receipt dates latest-first everywhere. */
         rows.sort((a, b) =>
-            String(a.date || "").localeCompare(String(b.date || ""))
+            String(b.date || "").localeCompare(String(a.date || ""))
         );
 
         receiptRender(section);
@@ -2976,9 +3048,10 @@ function receiptAddRow(section) {
 
     rows.push(row);
 
+    /* New receipt rows must follow the same latest-first date order. */
     rows.sort(
         (a, b) =>
-            String(a.date).localeCompare(String(b.date))
+            String(b.date || "").localeCompare(String(a.date || ""))
     );
 
     tableData[section] = rows;
@@ -3594,6 +3667,11 @@ async function loadTable(section) {
         const rawRows = Array.isArray(result) ? result : [];
         discoverDynamicColumns(section, rawRows);
 
+        /*
+         * All non-receipt tables use the same date order as receipts:
+         * latest date first.  This also keeps the underlying row array
+         * consistent with the visible DataTables order.
+         */
         tableData[section] = rawRows
             .map(row => {
                 const cleanRow = {
@@ -3604,7 +3682,10 @@ async function loadTable(section) {
                 calculateTotal(cfg, cleanRow);
 
                 return cleanRow;
-            });
+            })
+            .sort((a, b) =>
+                String(b.date || "").localeCompare(String(a.date || ""))
+            );
 
         initializeDataTable(section);
 
