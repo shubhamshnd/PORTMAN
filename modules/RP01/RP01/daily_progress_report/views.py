@@ -6096,8 +6096,8 @@ LEFT JOIN ldud_vessel_operations lco
         tide_headers = ['Type', 'Time', 'Mtrs']
 
         # Titles side by side (MBC at Col 1 / A, Tide Table at Col 11 / K)
-        section(mbc_start_row, 1, "MBC'S DISCHARGE COMPLETED ", span=len(headers))
-        section(mbc_start_row, 11, "Tide Table", span=len(tide_headers), align=center)
+        caption(mbc_start_row, 1, "MBC'S DISCHARGE COMPLETED", span=len(headers), font=header_font, align=center)
+        caption(mbc_start_row, 11, "Tide Table", span=len(tide_headers), font=header_font, align=center)
 
         for i, h in enumerate(headers):
             header(mbc_start_row + 1, 1 + i, h)
@@ -6147,7 +6147,7 @@ LEFT JOIN ldud_vessel_operations lco
 
         def simple_table(title, rows, headers, keys):
             nonlocal row_no
-            caption(row_no, 1, title, span=len(headers), font=header_font)
+            caption(row_no, 1, title, span=len(headers), font=header_font, align=center)
             row_no += 1
             for i, h in enumerate(headers):
                 header(row_no, 1 + i, h)
@@ -6436,7 +6436,7 @@ LEFT JOIN ldud_vessel_operations lco
         # row_no += 1
         headers = ['SR.NO.', 'M.Vessel Name', 'Cargo ', 'B/L Qty. (MT)', 'Load  Port',
                    'Discharge Commence', 'Discharge Completed', 'Time Taken (Hrs)']
-        section(row_no, 1, f'Vessel Completed for The Month {month_label}', span=len(headers))
+        caption(row_no, 1, f'Vessel Completed for The Month {month_label}', span=len(headers), font=header_font, align=center)
         row_no += 1
         for i, h in enumerate(headers):
             header(row_no, 1 + i, h)
