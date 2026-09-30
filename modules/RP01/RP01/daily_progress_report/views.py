@@ -8,6 +8,7 @@ from openpyxl.styles import PatternFill
 import json
 from ..daily_ops.views import _compute_fy_throughput
 from ..daily_ops.model import fy_label
+from ..port_overview.views import _cumulative_by_type, BASELINE_TILL_MAR_2026
 
 from flask import Response
 from openpyxl import Workbook
@@ -2045,22 +2046,22 @@ def barge_discharge_report():
         historic_totals = {}
         for row in historic_rows:
             key = cat_key(row['cargo_type'], row['cargo_category'])
-            historic_totals[key] = int(row['historic_total'] or 0)
+            historic_totals[key] = float(row['historic_total'] or 0)
 
-        # ---- Live totals (May onward) merged with historic to form FY ----
+        # ---- Live totals (May onward) merged with historic to form raw FY ----
         month_totals = {}
-        fy_totals = {}
+        raw_fy_totals = {}
         for row in live_rows:
             key = cat_key(row['cargo_type'], row['cargo_category'])
             month_totals[key] = int(row['month_total'] or 0)
-            live_fy = int(row['live_fy_total'] or 0)
-            hist = historic_totals.get(key, 0)
-            fy_totals[key] = hist + live_fy
+            live_fy = float(row['live_fy_total'] or 0)
+            hist = float(historic_totals.get(key, 0))
+            raw_fy_totals[key] = hist + live_fy
 
         # Categories that ONLY had historic (April) activity, with nothing live yet
         for key, hist_val in historic_totals.items():
-            if key not in fy_totals:
-                fy_totals[key] = hist_val
+            if key not in raw_fy_totals:
+                raw_fy_totals[key] = float(hist_val)
                 month_totals.setdefault(key, 0)
 
         # ---- Prior-FY category weights (before live_start). Used ONLY to
@@ -2075,51 +2076,72 @@ def barge_discharge_report():
             weight_by_category[key] = qty
             weight_by_type[ctype] = weight_by_type.get(ctype, 0) + qty
 
-        # ---- HARDCODED baseline: cumulative throughput per cargo_type,
-        # FY2012-2013 (Half Year) through FY2025-2026 (i.e. everything up
-        # to and including March 31, 2026). Sourced from the FY summary
-        # table (Total row). Keyed case-insensitively so it matches
-        # whatever casing cargo_type actually has in vessel_cargo.
-        BASELINE_TILL_MAR_2026 = {
-            "IBRM": 116229319,
-            "FLUXES": 24038328,
-            "CBRM": 52438887,
-            "CLINKER": 3453541,
-            "SLAG": 1439086,
-            "FINISH GOODS": 157549,
-            "OTHER": 354512,
-            "OTHERS": 354512,   # in case master data defaults to 'Others'
-        }
+        # Anchor FY & Cumulative totals to Port Overview (_cumulative_by_type)
+        # so that Total Receipts FY and Total Cumulative match Port Overview exactly.
+        po_fy, po_cum = _cumulative_by_type(data_date)
 
-        # ---- Cumulative totals = hardcoded baseline (through Mar 2026)
-        # + current FY total (fy_totals, which is already historic-April
-        # + live-May-onward for the current FY, computed above). No call
-        # to _compute_fy_throughput, so no risk of it silently including
-        # rp01_historical_lueu data for prior years either — the baseline
-        # is a fixed, known-correct number instead. ----
+        def _find_po_match(d, ctype):
+            u = (ctype or '').strip().upper()
+            for k, v in d.items():
+                if (k or '').strip().upper() == u:
+                    return v
+            if u in ('OTHER', 'OTHERS'):
+                for k, v in d.items():
+                    if (k or '').strip().upper() in ('OTHER', 'OTHERS'):
+                        return v
+            return 0.0
+
+        fy_totals = {}
         cumulative_totals = {}
+
         for ctype, ccats in cargo_hierarchy.items():
-            baseline_type_total = BASELINE_TILL_MAR_2026.get(ctype.strip().upper())
+            target_fy_type = int(round(_find_po_match(po_fy, ctype)))
+            target_cum_type = int(round(_find_po_match(po_cum, ctype)))
+
+            # 1. FY distribution across categories
+            type_raw_fy = sum(raw_fy_totals.get(cat_key(ctype, c), 0.0) for c in ccats)
+            if type_raw_fy > 0:
+                assigned_fy = {
+                    cat_key(ctype, c): int(round(target_fy_type * (raw_fy_totals.get(cat_key(ctype, c), 0.0) / type_raw_fy)))
+                    for c in ccats
+                }
+                diff_fy = target_fy_type - sum(assigned_fy.values())
+                if diff_fy != 0 and assigned_fy:
+                    best_k = max(assigned_fy, key=assigned_fy.get)
+                    assigned_fy[best_k] += diff_fy
+                fy_totals.update(assigned_fy)
+            else:
+                for c in ccats:
+                    fy_totals[cat_key(ctype, c)] = 0
+
+            # 2. Cumulative distribution across categories
+            baseline_type_total = BASELINE_TILL_MAR_2026.get((ctype or '').strip().upper())
             type_weight = weight_by_type.get(ctype, 0)
-
-            for ccat in ccats:
-                key = cat_key(ctype, ccat)
-                current_fy_amt = fy_totals.get(key, 0)
-
+            raw_cum_by_cat = {}
+            for c in ccats:
+                k = cat_key(ctype, c)
                 if baseline_type_total and type_weight > 0:
-                    # Split baseline across this type's categories using
-                    # prior-FY live proportions.
-                    cat_weight = weight_by_category.get(key, 0)
-                    share = baseline_type_total * (cat_weight / type_weight)
+                    share = baseline_type_total * (weight_by_category.get(k, 0) / type_weight)
                 elif baseline_type_total:
-                    # No weight data to split by (e.g. brand-new category)
-                    # — split evenly across the type's categories instead.
                     share = baseline_type_total / len(ccats) if ccats else 0
                 else:
-                    # No baseline for this cargo_type at all.
                     share = 0
+                raw_cum_by_cat[k] = share + raw_fy_totals.get(k, 0.0)
 
-                cumulative_totals[key] = int(round(share)) + int(current_fy_amt)
+            type_raw_cum = sum(raw_cum_by_cat.values())
+            if type_raw_cum > 0:
+                assigned_cum = {
+                    cat_key(ctype, c): int(round(target_cum_type * (raw_cum_by_cat[cat_key(ctype, c)] / type_raw_cum)))
+                    for c in ccats
+                }
+                diff_cum = target_cum_type - sum(assigned_cum.values())
+                if diff_cum != 0 and assigned_cum:
+                    best_k = max(assigned_cum, key=assigned_cum.get)
+                    assigned_cum[best_k] += diff_cum
+                cumulative_totals.update(assigned_cum)
+            else:
+                for c in ccats:
+                    cumulative_totals[cat_key(ctype, c)] = 0
 
         # ---- Seed equipment_totals with full equipment list too ----
         equipment_totals = {row['equipment']: {"total_day": 0, "total_month": 0} for row in master_equipment_rows}
