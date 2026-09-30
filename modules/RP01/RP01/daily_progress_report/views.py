@@ -270,11 +270,7 @@ def daily_progress_report_data():
             vcd.bl_quantity,
             first_anchor.arrived_mfl,
             first_anchor.arrived_mbpt,
-            COALESCE(
-                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
-                first_anchor.discharge_started,
-                ops.min_start::timestamp
-            ) AS discharge_started,
+            first_anchor.discharge_started,
             last_anchor.discharge_completed AS discharge_commenced
 
         FROM ldud_header lh
@@ -450,6 +446,7 @@ def daily_progress_report_data():
             if discharge_start_raw and arrival_for_delay:
                 delay = discharge_start_raw - arrival_for_delay
                 total_hours = round(delay.total_seconds() / 3600, 2)
+                total_hours = max(total_hours, 0)
                 pre_berthing_delay = f"{total_hours} Hrs"
 
             # Discharge Completed — only show the timestamp if completion
@@ -548,10 +545,6 @@ def monthly_cargo_report():
                 lh.vcn_id,
                 lh.vessel_name,
                 COALESCE(
-                    LEAST(
-                        first_anchor.discharge_started,
-                        ops.min_start::timestamp
-                    ),
                     first_anchor.discharge_started,
                     ops.min_start::timestamp
                 ) AS discharge_started,
@@ -566,10 +559,6 @@ def monthly_cargo_report():
                 ROW_NUMBER() OVER (
                     ORDER BY
                         COALESCE(
-                            LEAST(
-                                first_anchor.discharge_started,
-                                ops.min_start::timestamp
-                            ),
                             first_anchor.discharge_started,
                             ops.min_start::timestamp
                         ),
@@ -624,7 +613,6 @@ def monthly_cargo_report():
             WHERE
                 (first_anchor.discharge_started IS NOT NULL OR ops.min_start IS NOT NULL)
                 AND COALESCE(
-                    LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
                     first_anchor.discharge_started,
                     ops.min_start::timestamp
                 ) < %s
@@ -5108,11 +5096,7 @@ def daily_progress_report_excel():
             vcd.bl_quantity,
             first_anchor.arrived_mfl,
             first_anchor.arrived_mbpt,
-            COALESCE(
-                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
-                first_anchor.discharge_started,
-                ops.min_start::timestamp
-            ) AS discharge_started,
+            first_anchor.discharge_started,
             last_anchor.discharge_completed AS discharge_commenced
         FROM ldud_header lh
         LEFT JOIN LATERAL (
@@ -5136,11 +5120,6 @@ def daily_progress_report_excel():
             WHERE ldud_id = lh.id
         ) first_anchor ON TRUE
         LEFT JOIN LATERAL (
-            SELECT MIN(start_time) AS min_start
-            FROM ldud_vessel_operations
-            WHERE ldud_id = lh.id
-        ) ops ON TRUE
-        LEFT JOIN LATERAL (
             SELECT
                 CASE
                     WHEN EXISTS (
@@ -5155,12 +5134,8 @@ def daily_progress_report_excel():
             WHERE ldud_id = lh.id
         ) last_anchor ON TRUE
         WHERE
-            (first_anchor.discharge_started IS NOT NULL OR ops.min_start IS NOT NULL)
-            AND COALESCE(
-                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
-                first_anchor.discharge_started,
-                ops.min_start::timestamp
-            ) < %s
+            first_anchor.discharge_started IS NOT NULL
+            AND first_anchor.discharge_started < %s
             AND (
                 last_anchor.discharge_completed IS NULL
                 OR last_anchor.discharge_completed >= %s
@@ -5170,11 +5145,7 @@ def daily_progress_report_excel():
                     AND (b.completed_discharge_berth IS NULL OR b.cast_off_berth IS NULL)
                 )
             )
-        ORDER BY COALESCE(
-            LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
-            first_anchor.discharge_started,
-            ops.min_start::timestamp
-        ), lh.id
+        ORDER BY first_anchor.discharge_started, lh.id
         """
 
         cur.execute(vessel_query, (window_end, window_start))
@@ -5339,6 +5310,7 @@ def daily_progress_report_excel():
             pre_delay = ''
             if v['discharge_started'] and arrival_for_delay:
                 hrs = round((v['discharge_started'] - arrival_for_delay).total_seconds() / 3600, 2)
+                hrs = max(hrs, 0)
                 pre_delay = f"{hrs} Hrs"
 
             discharge_completed_disp = ''
