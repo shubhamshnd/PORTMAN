@@ -270,7 +270,11 @@ def daily_progress_report_data():
             vcd.bl_quantity,
             first_anchor.arrived_mfl,
             first_anchor.arrived_mbpt,
-            first_anchor.discharge_started,
+            COALESCE(
+                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+                first_anchor.discharge_started,
+                ops.min_start::timestamp
+            ) AS discharge_started,
             last_anchor.discharge_completed AS discharge_commenced
 
         FROM ldud_header lh
@@ -324,6 +328,12 @@ def daily_progress_report_data():
         ) first_anchor ON TRUE
 
         LEFT JOIN LATERAL (
+            SELECT MIN(start_time) AS min_start
+            FROM ldud_vessel_operations
+            WHERE ldud_id = lh.id
+        ) ops ON TRUE
+
+        LEFT JOIN LATERAL (
 
             SELECT
                 CASE
@@ -344,8 +354,12 @@ def daily_progress_report_data():
         ) last_anchor ON TRUE
 
         WHERE
-            first_anchor.discharge_started IS NOT NULL
-            AND first_anchor.discharge_started < %s
+            (first_anchor.discharge_started IS NOT NULL OR ops.min_start IS NOT NULL)
+            AND COALESCE(
+                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+                first_anchor.discharge_started,
+                ops.min_start::timestamp
+            ) < %s
 
             AND (
                 last_anchor.discharge_completed IS NULL
@@ -533,7 +547,14 @@ def monthly_cargo_report():
                 lh.id,
                 lh.vcn_id,
                 lh.vessel_name,
-                first_anchor.discharge_started,
+                COALESCE(
+                    LEAST(
+                        first_anchor.discharge_started,
+                        ops.min_start::timestamp
+                    ),
+                    first_anchor.discharge_started,
+                    ops.min_start::timestamp
+                ) AS discharge_started,
                 last_anchor.discharge_completed,
 
                 CASE
@@ -544,7 +565,14 @@ def monthly_cargo_report():
 
                 ROW_NUMBER() OVER (
                     ORDER BY
-                        first_anchor.discharge_started,
+                        COALESCE(
+                            LEAST(
+                                first_anchor.discharge_started,
+                                ops.min_start::timestamp
+                            ),
+                            first_anchor.discharge_started,
+                            ops.min_start::timestamp
+                        ),
                         lh.id
                 ) AS vessel_seq
 
@@ -555,6 +583,12 @@ def monthly_cargo_report():
                 FROM ldud_anchorage
                 WHERE ldud_id = lh.id
             ) first_anchor ON TRUE
+
+            LEFT JOIN LATERAL (
+                SELECT MIN(start_time) AS min_start
+                FROM ldud_vessel_operations
+                WHERE ldud_id = lh.id
+            ) ops ON TRUE
 
             -- FIX: A vessel can have several ldud_anchorage rows (one per
             -- hold/leg). The old version took MAX(discharge_commenced)
@@ -588,8 +622,12 @@ def monthly_cargo_report():
             ) last_anchor ON TRUE
 
             WHERE
-                first_anchor.discharge_started IS NOT NULL
-                AND first_anchor.discharge_started < %s
+                (first_anchor.discharge_started IS NOT NULL OR ops.min_start IS NOT NULL)
+                AND COALESCE(
+                    LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+                    first_anchor.discharge_started,
+                    ops.min_start::timestamp
+                ) < %s
                 AND (
                     last_anchor.discharge_completed IS NULL
                     OR last_anchor.discharge_completed >= %s
@@ -640,7 +678,7 @@ def monthly_cargo_report():
         LEFT JOIN ldud_vessel_operations lco
     ON lco.ldud_id = vl.id
    AND LOWER(TRIM(lco.cargo_name)) = LOWER(TRIM(vl.cargo_name))
-   AND DATE(lco.start_time) BETWEEN DATE(vl.discharge_started) AND %s::date
+   AND DATE(lco.start_time) <= %s::date
    AND (
         vl.discharge_completed IS NULL
         OR DATE(lco.start_time) <= DATE(vl.discharge_completed)
@@ -4928,16 +4966,22 @@ def daily_progress_report_excel():
             if span > 1:
                 ws.merge_cells(start_row=row, start_column=col,
                                 end_row=row, end_column=col + span - 1)
+            if isinstance(text, str) and text.strip():
+                clean_text = text.strip().replace(',', '')
+                try:
+                    num_val = float(clean_text)
+                    text = int(round(num_val))
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(text, (float, Decimal)) and not isinstance(text, bool):
+                text = int(round(float(text)))
             c = ws.cell(row, col, text if text not in (None, '') else '')
             c.font = font
             c.alignment = align
             c.fill = fill
             c.border = border
             if isinstance(text, (int, float, Decimal)) and not isinstance(text, bool):
-                if isinstance(text, float) and text % 1 != 0:
-                    c.number_format = '#,##0.00'
-                else:
-                    c.number_format = '#,##0'
+                c.number_format = '#,##0'
             if span > 1:
                 for extra in range(col + 1, col + span):
                     ec = ws.cell(row, extra)
@@ -4962,16 +5006,22 @@ def daily_progress_report_excel():
             if span > 1:
                 ws.merge_cells(start_row=row, start_column=col,
                                 end_row=row, end_column=col + span - 1)
+            if isinstance(val, str) and val.strip():
+                clean_val = val.strip().replace(',', '')
+                try:
+                    num_val = float(clean_val)
+                    val = int(round(num_val))
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(val, (float, Decimal)) and not isinstance(val, bool):
+                val = int(round(float(val)))
             c = ws.cell(row, col, val if val not in (None, '') else '')
             c.font = data_font
             c.alignment = align
             c.fill = white_fill
             c.border = border
             if isinstance(val, (int, float, Decimal)) and not isinstance(val, bool):
-                if isinstance(val, float) and val % 1 != 0:
-                    c.number_format = '#,##0.00'
-                else:
-                    c.number_format = '#,##0'
+                c.number_format = '#,##0'
             if span > 1:
                 for extra in range(col + 1, col + span):
                     ec = ws.cell(row, extra)
@@ -5058,7 +5108,11 @@ def daily_progress_report_excel():
             vcd.bl_quantity,
             first_anchor.arrived_mfl,
             first_anchor.arrived_mbpt,
-            first_anchor.discharge_started,
+            COALESCE(
+                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+                first_anchor.discharge_started,
+                ops.min_start::timestamp
+            ) AS discharge_started,
             last_anchor.discharge_completed AS discharge_commenced
         FROM ldud_header lh
         LEFT JOIN LATERAL (
@@ -5082,6 +5136,11 @@ def daily_progress_report_excel():
             WHERE ldud_id = lh.id
         ) first_anchor ON TRUE
         LEFT JOIN LATERAL (
+            SELECT MIN(start_time) AS min_start
+            FROM ldud_vessel_operations
+            WHERE ldud_id = lh.id
+        ) ops ON TRUE
+        LEFT JOIN LATERAL (
             SELECT
                 CASE
                     WHEN EXISTS (
@@ -5096,8 +5155,12 @@ def daily_progress_report_excel():
             WHERE ldud_id = lh.id
         ) last_anchor ON TRUE
         WHERE
-            first_anchor.discharge_started IS NOT NULL
-            AND first_anchor.discharge_started < %s
+            (first_anchor.discharge_started IS NOT NULL OR ops.min_start IS NOT NULL)
+            AND COALESCE(
+                LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+                first_anchor.discharge_started,
+                ops.min_start::timestamp
+            ) < %s
             AND (
                 last_anchor.discharge_completed IS NULL
                 OR last_anchor.discharge_completed >= %s
@@ -5107,7 +5170,11 @@ def daily_progress_report_excel():
                     AND (b.completed_discharge_berth IS NULL OR b.cast_off_berth IS NULL)
                 )
             )
-        ORDER BY first_anchor.discharge_started, lh.id
+        ORDER BY COALESCE(
+            LEAST(first_anchor.discharge_started, ops.min_start::timestamp),
+            first_anchor.discharge_started,
+            ops.min_start::timestamp
+        ), lh.id
         """
 
         cur.execute(vessel_query, (window_end, window_start))
@@ -5324,16 +5391,27 @@ def daily_progress_report_excel():
         FROM ldud_header lh
         JOIN vcn_cargo_declaration vcd ON vcd.vcn_id = lh.vcn_id
         LEFT JOIN LATERAL (
-    SELECT MIN(discharge_started) AS discharge_started
-    FROM ldud_anchorage
-    WHERE ldud_id = lh.id
-) first_anchor ON TRUE
-
-LEFT JOIN ldud_vessel_operations lco
-    ON lco.ldud_id = lh.id
-    AND LOWER(TRIM(lco.cargo_name)) = LOWER(TRIM(vcd.cargo_name))
-    AND DATE(lco.start_time)
-        BETWEEN DATE(first_anchor.discharge_started) AND %s::date
+            SELECT
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM ldud_anchorage x
+                        WHERE x.ldud_id = lh.id
+                        AND x.discharge_started IS NOT NULL
+                        AND x.discharge_commenced IS NULL
+                    ) THEN NULL
+                    ELSE MAX(discharge_commenced)
+                END AS discharge_completed
+            FROM ldud_anchorage
+            WHERE ldud_id = lh.id
+        ) last_anchor ON TRUE
+        LEFT JOIN ldud_vessel_operations lco
+            ON lco.ldud_id = lh.id
+            AND LOWER(TRIM(lco.cargo_name)) = LOWER(TRIM(vcd.cargo_name))
+            AND DATE(lco.start_time) <= %s::date
+            AND (
+                last_anchor.discharge_completed IS NULL
+                OR DATE(lco.start_time) <= DATE(last_anchor.discharge_completed)
+            )
         WHERE lh.id = ANY(%s)
         GROUP BY lh.id, TRIM(vcd.cargo_name), DATE(lco.start_time)
         ORDER BY DATE(lco.start_time)
