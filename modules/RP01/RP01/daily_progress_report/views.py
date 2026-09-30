@@ -15,6 +15,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import io
 from datetime import datetime, timedelta
+from decimal import Decimal
 from flask import (
     render_template,
     request,
@@ -813,11 +814,44 @@ def monthly_cargo_report():
 
                 report_data[key]["daily_data"][day]["total_qty"] += float(row["total_qty"] or 0)
 
+        # Collect all recorded days across vessels and generate continuous sequence
+        all_recorded_days = set()
         for vessel in report_data.values():
+            for day_key in vessel["daily_data"].keys():
+                all_recorded_days.add(day_key)
+
+        if all_recorded_days:
+            sorted_days = sorted(
+                all_recorded_days,
+                key=lambda s: datetime.strptime(s, "%d-%m-%Y")
+            )
+            start_dt = datetime.strptime(sorted_days[0], "%d-%m-%Y").date()
+            end_dt = datetime.strptime(sorted_days[-1], "%d-%m-%Y").date()
+
+            full_days_seq = []
+            curr_dt = start_dt
+            while curr_dt <= end_dt:
+                full_days_seq.append(curr_dt.strftime("%d-%m-%Y"))
+                curr_dt += timedelta(days=1)
+        else:
+            full_days_seq = []
+
+        for vessel in report_data.values():
+
+            # Fill missing sequential dates with 0 qty
+            for day in full_days_seq:
+                if day not in vessel["daily_data"]:
+                    vessel["daily_data"][day] = {
+                        "date_day": day,
+                        "cargo_name": "",
+                        "total_qty": 0,
+                        "ww_hrs": "-",
+                        "total_mv": 0
+                    }
 
             vessel["cargo_name"] = " + ".join(sorted(vessel["cargo_names"]))
 
-            vessel["daily_data"] = list(vessel["daily_data"].values())
+            vessel["daily_data"] = [vessel["daily_data"][d] for d in full_days_seq]
 
             total_discharged = sum(
                 float(d["total_qty"] or 0)
@@ -853,7 +887,7 @@ def monthly_cargo_report():
 
                 day_win_end = day_win_start + timedelta(hours=24)
 
-                if d_start is None:
+                if d_start is None or day_win_end <= d_start or (d_end and day_win_start >= d_end):
                     day["ww_hrs"] = "-"
                     day["total_delay"] = "-"
                     continue
@@ -867,6 +901,11 @@ def monthly_cargo_report():
                     0
                 )
                 gross_hours = min(gross_hours, 24)
+
+                if gross_hours <= 0:
+                    day["ww_hrs"] = "-"
+                    day["total_delay"] = "-"
+                    continue
                 # ---------------- Total Delay Hours ----------------
                 deduction_hours = 0.0
 
@@ -2611,6 +2650,93 @@ def mbc_arrived_report():
 
     finally:
 
+        cur.close()
+        conn.close()
+
+
+@bp.route(
+    '/api/module/RP01/mbc_arrived_mumbai_report',
+    methods=['GET']
+)
+@login_required
+def mbc_arrived_mumbai_report():
+
+    report_date = request.args.get("report_date")
+
+    print("\n========== MBC ARRIVED MUMBAI REPORT START ==========")
+    print("REPORT DATE:", report_date)
+
+    if not report_date:
+        return jsonify({
+            "success": False,
+            "message": "Report date required"
+        })
+
+    conn = get_db()
+    cur = get_cursor(conn)
+
+    try:
+        report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+
+        window_end = datetime(
+            report_dt.year,
+            report_dt.month,
+            report_dt.day,
+            8, 0, 0
+        )
+
+        query = """
+        SELECT
+            mh.id,
+            mh.mbc_name,
+            mh.cargo_name,
+            mh.bl_quantity,
+            mh.load_port,
+            dpl.arrival_gull_island
+        FROM mbc_header mh
+        JOIN mbc_discharge_port_lines dpl
+            ON dpl.mbc_id = mh.id
+        WHERE
+            mh.id <> 374
+            AND NULLIF(TRIM(dpl.arrival_gull_island), '') IS NOT NULL
+            AND NULLIF(TRIM(dpl.departure_gull_island), '') IS NULL
+            AND NULLIF(TRIM(dpl.arrival_gull_island), '')::timestamp <= %s
+        ORDER BY
+            NULLIF(TRIM(dpl.arrival_gull_island), '')::timestamp
+        """
+
+        cur.execute(query, (window_end,))
+        rows = cur.fetchall()
+
+        data = []
+        sr_no = 1
+
+        for row in rows:
+            arrived = _parse_flexible_dt(row["arrival_gull_island"], "%d-%m-%Y %H:%M")
+            data.append({
+                "mbc_no": sr_no,
+                "mbc_name": row["mbc_name"] or "",
+                "cargo": row["cargo_name"] or "",
+                "bl_qty": int(row["bl_quantity"] or 0),
+                "load_port": row["load_port"] or "",
+                "arrived_mumbai": arrived
+            })
+            sr_no += 1
+
+        return jsonify({
+            "success": True,
+            "data": data
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        })
+
+    finally:
         cur.close()
         conn.close()
 
@@ -4802,11 +4928,16 @@ def daily_progress_report_excel():
             if span > 1:
                 ws.merge_cells(start_row=row, start_column=col,
                                 end_row=row, end_column=col + span - 1)
-            c = ws.cell(row, col, text)
+            c = ws.cell(row, col, text if text not in (None, '') else '')
             c.font = font
             c.alignment = align
             c.fill = fill
             c.border = border
+            if isinstance(text, (int, float, Decimal)) and not isinstance(text, bool):
+                if isinstance(text, float) and text % 1 != 0:
+                    c.number_format = '#,##0.00'
+                else:
+                    c.number_format = '#,##0'
             if span > 1:
                 for extra in range(col + 1, col + span):
                     ec = ws.cell(row, extra)
@@ -4836,6 +4967,11 @@ def daily_progress_report_excel():
             c.alignment = align
             c.fill = white_fill
             c.border = border
+            if isinstance(val, (int, float, Decimal)) and not isinstance(val, bool):
+                if isinstance(val, float) and val % 1 != 0:
+                    c.number_format = '#,##0.00'
+                else:
+                    c.number_format = '#,##0'
             if span > 1:
                 for extra in range(col + 1, col + span):
                     ec = ws.cell(row, extra)
@@ -5142,10 +5278,19 @@ def daily_progress_report_excel():
             if v['discharge_commenced'] and window_start <= v['discharge_commenced'] < window_end:
                 discharge_completed_disp = fmt_dt(v['discharge_commenced'])
 
+            bl_qty_val = ''
+            if v['bl_quantity'] is not None and v['bl_quantity'] != '':
+                try:
+                    bl_qty_val = float(v['bl_quantity'])
+                    if bl_qty_val.is_integer():
+                        bl_qty_val = int(bl_qty_val)
+                except (ValueError, TypeError):
+                    bl_qty_val = v['bl_quantity']
+
             values = [
                 v['vessel_name'] or '',
                 v['cargo_name'] or '',
-                v['bl_quantity'] or '',
+                bl_qty_val,
                 fmt_dt(v['arrived_mfl']),
                 fmt_dt(v['arrived_mbpt']),
                 fmt_dt(v['discharge_started']),
@@ -5157,6 +5302,11 @@ def daily_progress_report_excel():
                 value(grid_start + r_off, col, v2, span=VESSEL_BLOCK_WIDTH)
 
             col += VESSEL_BLOCK_WIDTH
+
+        # Blank 3-cell column after last vessel
+        empty_col = col
+        for r_off in range(len(row_labels)):
+            value(grid_start + r_off, empty_col, '', span=VESSEL_BLOCK_WIDTH)
 
         row_no = grid_start + len(row_labels) + 1
 
@@ -5213,10 +5363,22 @@ LEFT JOIN ldud_vessel_operations lco
                 if cname and cname not in entry['cargoes']:
                     entry['cargoes'].append(cname)
 
-        all_days = sorted(
-            {d for bucket in daily_by_vessel.values() for d in bucket},
+        raw_days_set = {d for bucket in daily_by_vessel.values() for d in bucket}
+
+        raw_days = sorted(
+            raw_days_set,
             key=lambda s: datetime.strptime(s, '%d-%m-%Y')
         )
+        if raw_days:
+            start_dt = datetime.strptime(raw_days[0], '%d-%m-%Y').date()
+            end_dt = datetime.strptime(raw_days[-1], '%d-%m-%Y').date()
+            all_days = []
+            curr_dt = start_dt
+            while curr_dt <= end_dt:
+                all_days.append(curr_dt.strftime('%d-%m-%Y'))
+                curr_dt += timedelta(days=1)
+        else:
+            all_days = []
 
         # =====================================================
         # DATE / DAY MATRIX
@@ -5232,6 +5394,8 @@ LEFT JOIN ldud_vessel_operations lco
             header(matrix_header_row, c + 1, 'Qty in MT')
             header(matrix_header_row, c + 2, 'W/W Hrs.')
 
+        header(matrix_header_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
+
         matrix_row = matrix_header_row + 1
         vessel_totals = {v['id']: 0.0 for v in vessels}
         vessel_ww_totals = {v['id']: 0.0 for v in vessels}  # decimal hours, for TOTAL + Avg rows
@@ -5243,14 +5407,14 @@ LEFT JOIN ldud_vessel_operations lco
                 c = vessel_col_map[v['id']]
                 entry = daily_by_vessel.get(v['id'], {}).get(day)
                 qty = entry['qty'] if entry else 0
-                cargo_text = ' + '.join(entry['cargoes']) if entry else ''
+                cargo_text = ' + '.join(entry['cargoes']) if entry and entry.get('cargoes') else (v.get('cargo_name') or '')
                 if qty:
                     data(matrix_row, c, cargo_text, align=left)
                     data(matrix_row, c + 1, qty)
                     vessel_totals[v['id']] += qty
                 else:
-                    data(matrix_row, c, '')
-                    data(matrix_row, c + 1, '')
+                    data(matrix_row, c, cargo_text if cargo_text else '', align=left)
+                    data(matrix_row, c + 1, 0)
 
                 # W/W Hrs — clipped to this day's 8am->8am window,
                 # minus Mother Vessel Agent / Force Majeure / MBP delay time.
@@ -5262,6 +5426,8 @@ LEFT JOIN ldud_vessel_operations lco
                     vessel_ww_totals[v['id']] += ww_hours
                 else:
                     data(matrix_row, c + 2, '')
+
+            data(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
 
             # Total MV Disch — port-wide total from lueu_lines for this
             # date, same source as monthly_cargo_report's day_total_map
@@ -5313,6 +5479,8 @@ LEFT JOIN ldud_vessel_operations lco
                 else ''
             )
 
+        data(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
+
         matrix_row += 1
 
 
@@ -5363,6 +5531,8 @@ LEFT JOIN ldud_vessel_operations lco
                 span=2
             )
             
+
+        data(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
 
         matrix_row += 1
 
@@ -5418,6 +5588,8 @@ LEFT JOIN ldud_vessel_operations lco
                 span=2
             )
 
+        data(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
+
         matrix_row += 1
 
 
@@ -5457,6 +5629,8 @@ LEFT JOIN ldud_vessel_operations lco
             v.get('hooks_available') or 4,
                 span=2
             )
+
+        data(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
 
         matrix_row += 1
         # =====================================================
@@ -5514,6 +5688,8 @@ LEFT JOIN ldud_vessel_operations lco
                 ec.fill = yellow_fill
                 ec.border = border
 
+        header(matrix_row, empty_col, '', span=VESSEL_BLOCK_WIDTH)
+
         ws.row_dimensions[matrix_row].height = TALL_ROW_HEIGHT
 
         matrix_row += 1
@@ -5533,6 +5709,7 @@ LEFT JOIN ldud_vessel_operations lco
             ws.merge_cells(start_row=row_no, start_column=c + 1,
                             end_row=row_no, end_column=c + VESSEL_BLOCK_WIDTH - 1)
             value(row_no, c + 1, v['vessel_name'] or '', span=VESSEL_BLOCK_WIDTH - 1, align=left)
+        data(row_no, empty_col, '', span=VESSEL_BLOCK_WIDTH)
         row_no += 1
 
         # =====================================================
@@ -5600,6 +5777,9 @@ LEFT JOIN ldud_vessel_operations lco
                     barge_stats[r['ldud_id']][status].append(bn)
 
         EDITABLE_BARGE_KEYS = {
+            'waiting_loading',
+            'waiting_empty_jetty',
+            'waiting_discharge',
             'r19_waiting_loaded',
             'empty_at_gull_r19',
             'in_transit_jetty_to_mv',
@@ -5619,11 +5799,13 @@ LEFT JOIN ldud_vessel_operations lco
                 text = None
 
                 if key in EDITABLE_BARGE_KEYS:
-                    manual_value = (
-                        barge_status_edits.get(str(v['id']), {}).get(key)
+                    v_edits = (
+                        barge_status_edits.get(str(v['id']))
+                        or barge_status_edits.get(v['id'])
+                        or {}
                     )
-                    if manual_value:
-                        text = manual_value
+                    if key in v_edits:
+                        text = v_edits[key]
                     elif key is not None:
                         computed = barge_stats.get(v['id'], {}).get(key, [])
                         text = ' + '.join(computed) if computed else None
@@ -5632,6 +5814,8 @@ LEFT JOIN ldud_vessel_operations lco
                     text = ' + '.join(computed) if computed else None
 
                 data(row_no, c, text if text else '', align=left, span=VESSEL_BLOCK_WIDTH)
+
+            data(row_no, empty_col, '', span=VESSEL_BLOCK_WIDTH)
 
             if key == 'remarks':
                 remarks_row_no = row_no
@@ -5643,7 +5827,7 @@ LEFT JOIN ldud_vessel_operations lco
             ws.row_dimensions[r].height = TALL_ROW_HEIGHT
 
         if remarks_row_no:
-            last_col = vessel_col_map[vessels[-1]['id']] + VESSEL_BLOCK_WIDTH - 1
+            last_col = empty_col + VESSEL_BLOCK_WIDTH - 1
             for c2 in range(1, last_col + 1):
                 ws.cell(row=remarks_row_no, column=c2).fill = yellow_fill
             ws.row_dimensions[remarks_row_no].height = 20
@@ -6250,6 +6434,35 @@ LEFT JOIN ldud_vessel_operations lco
             mbc_arrived_rows,
             ["SR.NO.", "MBC Name", "Cargo", "B/L Qty. (MT)", "Load  Port", "Arrived  @ Dharamtar"],
             ["mbc_name", "cargo", "bl_qty", "load_port", "arrived_dharamtar"],
+        )
+
+        # MBC ARRIVED AT MUMBAI
+        cur.execute("""
+            SELECT mh.mbc_name, mh.cargo_name, mh.bl_quantity, mh.load_port,
+                   dpl.arrival_gull_island
+            FROM mbc_header mh
+            JOIN mbc_discharge_port_lines dpl ON dpl.mbc_id = mh.id
+            WHERE
+                mh.id <> 374
+                AND NULLIF(TRIM(dpl.arrival_gull_island), '') IS NOT NULL
+                AND NULLIF(TRIM(dpl.departure_gull_island), '') IS NULL
+                AND NULLIF(TRIM(dpl.arrival_gull_island), '')::timestamp <= %s
+            ORDER BY NULLIF(TRIM(dpl.arrival_gull_island), '')::timestamp
+        """, (window_end,))
+
+        mbc_arrived_mumbai_rows = [{
+            "mbc_name": r["mbc_name"] or "",
+            "cargo": r["cargo_name"] or "",
+            "bl_qty": int(r["bl_quantity"] or 0),
+            "load_port": r["load_port"] or "",
+            "arrived_mumbai": _parse_flexible(r["arrival_gull_island"], "%d-%m-%Y %H:%M"),
+        } for r in cur.fetchall()]
+
+        simple_table(
+            "MBC ARRIVED AT MUMBAI",
+            mbc_arrived_mumbai_rows,
+            ["SR.NO.", "MBC Name", "Cargo", "B/L Qty. (MT)", "Load  Port", "Arrived @ Mumbai"],
+            ["mbc_name", "cargo", "bl_qty", "load_port", "arrived_mumbai"],
         )
 
         # >>> ADD THIS: the query that builds upcoming_rows was missing entirely

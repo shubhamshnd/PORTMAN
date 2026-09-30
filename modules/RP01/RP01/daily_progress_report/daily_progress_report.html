@@ -386,6 +386,8 @@ await loadArrivedVesselReport(reportDate);
 
 await loadMbcArrivedReport(reportDate);
 
+await loadMbcArrivedMumbaiReport(reportDate);
+
 await loadUpcomingVesselReport(reportDate);
 
 await loadMbcExpectedReport(reportDate);
@@ -629,10 +631,10 @@ function renderMonthlyReport(data) {
 
 
     // ============================================================
-    // SORT DATES
+    // SORT DATES & FILL GAPS TO ENSURE CONTINUOUS SEQUENCE
     // ============================================================
 
-    const uniqueDates =
+    const rawDates =
         Array.from(uniqueDatesSet).sort((a, b) => {
 
             const [ad, am, ay] =
@@ -645,6 +647,21 @@ function renderMonthlyReport(data) {
                 -
                 new Date(by, bm - 1, bd);
         });
+
+    const uniqueDates = [];
+    if (rawDates.length > 0) {
+        const [sd, sm, sy] = rawDates[0].split('-').map(Number);
+        const [ed, em, ey] = rawDates[rawDates.length - 1].split('-').map(Number);
+        let curr = new Date(sy, sm - 1, sd);
+        const end = new Date(ey, em - 1, ed);
+        while (curr <= end) {
+            const d = String(curr.getDate()).padStart(2, '0');
+            const m = String(curr.getMonth() + 1).padStart(2, '0');
+            const y = curr.getFullYear();
+            uniqueDates.push(`${d}-${m}-${y}`);
+            curr.setDate(curr.getDate() + 1);
+        }
+    }
 
 
     // ============================================================
@@ -865,20 +882,12 @@ function renderMonthlyReport(data) {
         // Total MV for the current day
         // --------------------------------------------------------
 
-        const firstVesselDay =
-            (vesselList[0].daily_data || [])
-                .find(
-                    d => d.date_day === currentDate
-                );
-
-
-        if (firstVesselDay) {
-
-            totalMvQty =
-                Number(
-                    firstVesselDay.total_mv || 0
-                );
-
+        for (const v of vesselList) {
+            const d = (v.daily_data || []).find(x => x.date_day === currentDate);
+            if (d && d.total_mv !== undefined && d.total_mv !== null) {
+                totalMvQty = Number(d.total_mv || 0);
+                break;
+            }
         }
 
 
@@ -907,7 +916,7 @@ function renderMonthlyReport(data) {
                     ${
                         totalMvQty > 0
                             ? totalMvQty.toLocaleString('en-IN')
-                            : '-'
+                            : 0
                     }
                 </td>
 
@@ -956,7 +965,7 @@ function renderMonthlyReport(data) {
                     ${
                         qty > 0
                             ? qty.toLocaleString('en-IN')
-                            : '-'
+                            : 0
                     }
                 </td>
 
@@ -968,7 +977,7 @@ function renderMonthlyReport(data) {
                 >
                     ${
                         qty > 0
-                            ? (dayData.ww_hrs || '-')
+                            ? (dayData?.ww_hrs || '-')
                             : '-'
                     }
                 </td>
@@ -1560,6 +1569,9 @@ function renderBargeStatusReport(data) {
         return;
 
     const editableRows = [
+        "waiting_loading",
+        "waiting_empty_jetty",
+        "waiting_discharge",
         "r19_waiting_loaded",
         "empty_at_gull_r19",
         "in_transit_jetty_to_mv",
@@ -1641,7 +1653,7 @@ function renderBargeStatusReport(data) {
                         class="barge-editable"
                         data-ldud="${ldudId}"
                         data-status="${key}"
-                        style="vertical-align:top;min-width:220px;"
+                        style="vertical-align:top;min-width:220px;white-space:pre-wrap;"
                     >
                         ${cellContent}
                     </td>
@@ -2384,6 +2396,102 @@ function renderMbcArrivedReport(data) {
                     <td>${row.load_port || "-"}</td>
                     <td style="text-align:center;">
                         ${row.arrived_dharamtar || "-"}
+                    </td>
+                </tr>
+            `;
+        });
+
+    } else {
+
+        html += `
+            <tr>
+                <td colspan="6" style="text-align:center;">
+                    No Records Found
+                </td>
+            </tr>
+        `;
+    }
+
+    html += `
+                </tbody>
+            </table>
+        </div>
+    </div>
+    `;
+
+    container.innerHTML += html;
+}
+
+async function loadMbcArrivedMumbaiReport(reportDate) {
+
+    try {
+
+        const response = await fetch(
+            `/api/module/RP01/mbc_arrived_mumbai_report?report_date=${reportDate}`
+        );
+
+        const result = await response.json();
+
+        if (!result.success) {
+
+            console.error(result.message);
+
+            return;
+        }
+
+        renderMbcArrivedMumbaiReport(result.data);
+
+    } catch (err) {
+
+        console.error(err);
+
+    }
+
+}
+
+function renderMbcArrivedMumbaiReport(data) {
+
+    const container = document.getElementById("report-container");
+
+    if (!container) return;
+
+    data = Array.isArray(data) ? data : [];
+
+    let html = `
+    <div class="report-section" style="margin-top:30px;">
+        <h4>MBC ARRIVED AT MUMBAI</h4>
+
+        <div style="overflow-x:auto;">
+            <table class="report-table">
+
+                <thead>
+                    <tr style="background:#fff200;color:red;font-weight:700;">
+                        <th>MBC No.</th>
+                        <th>MBC Name</th>
+                        <th>Cargo</th>
+                        <th>B/L Qty. (MT)</th>
+                        <th>Load Port</th>
+                        <th>Arrived @ Mumbai</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+    `;
+
+    if (data.length > 0) {
+
+        data.forEach(row => {
+            html += `
+                <tr>
+                    <td style="text-align:center;">${row.mbc_no || "-"}</td>
+                    <td>${row.mbc_name || "-"}</td>
+                    <td>${row.cargo || "-"}</td>
+                    <td style="text-align:right;">
+                        ${Number(row.bl_qty || 0).toLocaleString("en-IN")}
+                    </td>
+                    <td>${row.load_port || "-"}</td>
+                    <td style="text-align:center;">
+                        ${row.arrived_mumbai || "-"}
                     </td>
                 </tr>
             `;

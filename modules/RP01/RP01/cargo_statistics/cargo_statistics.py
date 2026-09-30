@@ -536,7 +536,9 @@ def _build_report(selected_date):
     )
 
     # Asking rate is based on remaining days in the report month.
-    balance_days = _days_left_in_month(report_date)
+    # Remaining days EXCLUDE the report date itself.
+    # Example: report_date = 27-Sep -> remaining days are 28, 29, 30 = 3 days.
+    balance_days = max(_days_left_in_month(report_date) - 1, 0)
 
     # Stock is a point-in-time snapshot for the report date.
     # JSW Steel column uses RMHS stock; PNP column uses PNP stock.
