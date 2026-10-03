@@ -5874,6 +5874,95 @@ def daily_progress_report_excel():
             'remarks',
         }
 
+        def _format_mbc_entry(r):
+            name = (r.get('mbc_name') or '').strip()
+            cargo = (r.get('cargo_name') or '').strip()
+            bal = max(0.0, float(r.get('balance_qty') or 0))
+            bal_str = str(int(round(bal))) if abs(bal - round(bal)) < 0.001 else f"{bal:.2f}"
+            if cargo:
+                return f"{name} [{cargo} - {bal_str}]"
+            return f"{name} [{bal_str}]"
+
+        # Fetch active MBCs for the blank column in Barge Status
+        cur.execute("""
+            WITH actual AS (
+                SELECT source_id, SUM(COALESCE(quantity,0)) AS actual_qty
+                FROM lueu_lines
+                WHERE source_type = 'MBC'
+                  AND is_deleted IS NOT TRUE
+                GROUP BY source_id
+            )
+            SELECT DISTINCT ON (UPPER(TRIM(h.mbc_name)))
+                h.id,
+                TRIM(h.mbc_name) AS mbc_name,
+                COALESCE(TRIM(h.cargo_name), '') AS cargo_name,
+                COALESCE(h.bl_quantity, 0) AS bl_quantity,
+                COALESCE(a.actual_qty, 0) AS actual_qty,
+                (COALESCE(h.bl_quantity, 0) - COALESCE(a.actual_qty, 0)) AS balance_qty,
+                d.vessel_arrival_port,
+                d.unloading_commenced,
+                d.unloading_completed,
+                d.vessel_cast_off
+            FROM mbc_discharge_port_lines d
+            JOIN mbc_header h ON h.id = d.mbc_id
+            LEFT JOIN actual a ON a.source_id = h.id
+            WHERE COALESCE(TRIM(h.mbc_name), '') <> ''
+              AND h.id <> 374
+            ORDER BY UPPER(TRIM(h.mbc_name)), d.id DESC
+        """)
+        mbc_trips = cur.fetchall()
+
+        # Under Discharge: Unloading commenced is PRESENT, unloading completed is ABSENT
+        mbc_under_discharge = [
+            _format_mbc_entry(r) for r in mbc_trips
+            if (r.get('unloading_commenced') or '').strip()
+            and not (r.get('unloading_completed') or '').strip()
+            and not (r.get('vessel_cast_off') or '').strip()
+        ]
+
+        # Waiting for Discharge: Arrived at jetty is PRESENT, unloading commenced is ABSENT
+        mbc_waiting_discharge = [
+            _format_mbc_entry(r) for r in mbc_trips
+            if (r.get('vessel_arrival_port') or '').strip()
+            and not (r.get('unloading_commenced') or '').strip()
+            and not (r.get('unloading_completed') or '').strip()
+            and not (r.get('vessel_cast_off') or '').strip()
+            and float(r.get('balance_qty') or 0) > 0
+        ]
+
+        # Also check export load port lines for loading commenced
+        cur.execute("""
+            WITH actual AS (
+                SELECT source_id, SUM(COALESCE(quantity,0)) AS actual_qty
+                FROM lueu_lines
+                WHERE source_type = 'MBC'
+                  AND is_deleted IS NOT TRUE
+                GROUP BY source_id
+            )
+            SELECT DISTINCT ON (UPPER(TRIM(h.mbc_name)))
+                h.id,
+                TRIM(h.mbc_name) AS mbc_name,
+                COALESCE(TRIM(h.cargo_name), '') AS cargo_name,
+                COALESCE(h.bl_quantity, 0) AS bl_quantity,
+                COALESCE(a.actual_qty, 0) AS actual_qty,
+                (COALESCE(h.bl_quantity, 0) - COALESCE(a.actual_qty, 0)) AS balance_qty,
+                e.arrived_at_port,
+                e.loading_commenced,
+                e.loading_completed,
+                e.cast_off_from_berth
+            FROM mbc_export_load_port_lines e
+            JOIN mbc_header h ON h.id = e.mbc_id
+            LEFT JOIN actual a ON a.source_id = h.id
+            WHERE COALESCE(TRIM(h.mbc_name), '') <> ''
+              AND h.id <> 374
+            ORDER BY UPPER(TRIM(h.mbc_name)), e.id DESC
+        """)
+        for r in cur.fetchall():
+            entry = _format_mbc_entry(r)
+            if (r.get('loading_commenced') or '').strip() and not (r.get('loading_completed') or '').strip() and not (r.get('cast_off_from_berth') or '').strip():
+                if entry not in mbc_under_discharge:
+                    mbc_under_discharge.append(entry)
+
         remarks_row_no = None
 
         for label, key in barge_status_rows:
@@ -5902,7 +5991,21 @@ def daily_progress_report_excel():
 
                 data(row_no, c, text if text else '', align=left, span=VESSEL_BLOCK_WIDTH)
 
-            data(row_no, empty_col, '', span=VESSEL_BLOCK_WIDTH)
+            mbc_val = ''
+            if key == 'at_jetty':
+                mbc_val = (
+                    barge_status_edits.get('mbc', {}).get(key)
+                    or ('\n'.join(mbc_under_discharge) if mbc_under_discharge else '')
+                )
+            elif key == 'waiting_discharge':
+                mbc_val = (
+                    barge_status_edits.get('mbc', {}).get(key)
+                    or ('\n'.join(mbc_waiting_discharge) if mbc_waiting_discharge else '')
+                )
+            elif key in EDITABLE_BARGE_KEYS and barge_status_edits.get('mbc', {}).get(key):
+                mbc_val = barge_status_edits.get('mbc', {}).get(key)
+
+            data(row_no, empty_col, mbc_val, align=left, span=VESSEL_BLOCK_WIDTH)
 
             if key == 'remarks':
                 remarks_row_no = row_no
