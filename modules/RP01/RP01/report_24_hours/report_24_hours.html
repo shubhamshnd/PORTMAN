@@ -403,8 +403,8 @@ function buildWhatsAppText(data) {
     lines.push(`  Steel Cargo   - ${Number(data.steel_cargo || 0).toLocaleString()} MT`);
     lines.push('');
 
-    // Jetty Handling
-    lines.push(`*Jetty Handling:*`);
+    // Berth Throughput
+    lines.push(`*Berth Throughput:*`);
     lines.push('');
     lines.push(`Today / MTD / YTD`);
     lines.push(
@@ -436,7 +436,7 @@ function buildWhatsAppText(data) {
 
     if (Number(data.maintenance_delay_hours || 0) > 0) {
         lines.push(
-            `  ${delaySr++}. Non Availability of Jetty System - ${Number(data.maintenance_delay_hours).toFixed(2)} Hrs.`
+            `  ${delaySr++}. Non Availability of DPPL System - ${Number(data.maintenance_delay_hours).toFixed(2)} Hrs.`
         );
     }
 
@@ -735,7 +735,7 @@ function render24HoursReport(data) {
 </div>
 
         <div class="report-line">
-            <b>Jetty Handling :</b>
+            <b>Berth Throughput :</b>
             <br>
             Today / MTD / YTD
             <br>
@@ -779,7 +779,7 @@ if (Number(data.rhms_delay_hours || 0) > 0) {
 if (Number(data.maintenance_delay_hours || 0) > 0) {
     html += `
         <li>
-            Non Availability of Jetty System -
+            Non Availability of DPPL System -
             ${Number(data.maintenance_delay_hours).toFixed(2)} Hrs.
         </li>
     `;
