@@ -6683,6 +6683,19 @@ def daily_progress_report_excel():
         # fanout, so no more GROUP BY/SUM needed at the outer level.
         # =====================================================
 
+        if report_dt.day == 1:
+            prev_month_last_day = report_dt.replace(day=1) - timedelta(days=1)
+            vessel_month_start_date = prev_month_last_day.replace(day=1)
+        else:
+            vessel_month_start_date = report_dt.replace(day=1)
+
+        vessel_window_start = vessel_month_start_date.replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+        vessel_window_end = report_dt.replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+
         cur.execute("""
             SELECT
                 lh.id,
@@ -6718,9 +6731,10 @@ def daily_progress_report_excel():
             ) anch ON TRUE
             WHERE
                 anch.discharge_completed IS NOT NULL
-                AND DATE(anch.discharge_completed) BETWEEN %s AND %s
+                AND anch.discharge_completed >= %s
+                AND anch.discharge_completed <  %s
             ORDER BY anch.discharge_completed
-        """, (month_start, report_date))
+        """, (vessel_window_start, vessel_window_end))
 
         completed_rows = [{
             "vessel_name": r["vessel_name"] or "",
@@ -6733,7 +6747,7 @@ def daily_progress_report_excel():
             "time_taken_hrs": float(r["time_taken_hrs"] or 0),
         } for r in cur.fetchall() if r["discharge_completed"]]
 
-        month_label = report_dt.strftime('%B')
+        month_label = vessel_month_start_date.strftime('%B')
 
         # section(row_no, 1, f'Vessel Completed for The Month {month_label}', span=9)
         # row_no += 1
