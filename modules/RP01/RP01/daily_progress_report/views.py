@@ -5012,26 +5012,41 @@ def daily_progress_report_excel():
             return caption(row, col, text, span=span, font=header_font,
                             fill=yellow_fill, align=align)
 
-        def data(row, col, val, align=center, span=1):
+        def data(row, col, val, align=center, span=1, keep_decimal=False, num_format=None):
             if span > 1:
                 ws.merge_cells(start_row=row, start_column=col,
                                 end_row=row, end_column=col + span - 1)
-            if isinstance(val, str) and val.strip():
-                clean_val = val.strip().replace(',', '')
-                try:
-                    num_val = float(clean_val)
-                    val = int(round(num_val))
-                except (ValueError, TypeError):
-                    pass
-            elif isinstance(val, (float, Decimal)) and not isinstance(val, bool):
-                val = int(round(float(val)))
+            if keep_decimal:
+                if isinstance(val, str) and val.strip():
+                    clean_val = val.strip().replace(',', '')
+                    try:
+                        val = round(float(clean_val), 2)
+                    except (ValueError, TypeError):
+                        pass
+                elif isinstance(val, (float, Decimal)) and not isinstance(val, bool):
+                    val = round(float(val), 2)
+            else:
+                if isinstance(val, str) and val.strip():
+                    clean_val = val.strip().replace(',', '')
+                    try:
+                        num_val = float(clean_val)
+                        val = int(round(num_val))
+                    except (ValueError, TypeError):
+                        pass
+                elif isinstance(val, (float, Decimal)) and not isinstance(val, bool):
+                    val = int(round(float(val)))
             c = ws.cell(row, col, val if val not in (None, '') else '')
             c.font = data_font
             c.alignment = align
             c.fill = white_fill
             c.border = border
             if isinstance(val, (int, float, Decimal)) and not isinstance(val, bool):
-                c.number_format = '#,##0'
+                if num_format:
+                    c.number_format = num_format
+                elif keep_decimal or isinstance(val, float):
+                    c.number_format = '0.00'
+                else:
+                    c.number_format = '#,##0'
             if span > 1:
                 for extra in range(col + 1, col + span):
                     ec = ws.cell(row, extra)
@@ -6383,13 +6398,16 @@ def daily_progress_report_excel():
             caption(mbc_start_row + 2, 11, '', span=3)
         else:
             heights = [float(r['tide_meters'] or 0) for r in tide_rows]
-            current = 'HW' if len(heights) >= 2 and heights[0] > heights[1] else 'HW'
+            if len(heights) >= 2:
+                current = 'HW' if heights[0] > heights[1] else 'LW'
+            else:
+                current = 'HW'
             for t_idx, r in enumerate(tide_rows):
                 curr_row = mbc_start_row + 2 + t_idx
                 time_disp = _parse_flexible(r['tide_datetime'], '%H:%M')
                 data(curr_row, 11, current, align=left)
                 data(curr_row, 12, time_disp)
-                data(curr_row, 13, float(r['tide_meters'] or 0))
+                data(curr_row, 13, float(r['tide_meters'] or 0), keep_decimal=True, num_format='0.00')
                 current = 'LW' if current == 'HW' else 'HW'
 
         mbc_count = len(mbc_completed) if mbc_completed else 1
@@ -6738,7 +6756,7 @@ def daily_progress_report_excel():
             data(row_no, 5, r['load_port'], align=left)
             data(row_no, 6, r['discharge_commenced'])
             data(row_no, 7, r['discharge_completed'])
-            data(row_no, 8, r['time_taken_hrs'])
+            data(row_no, 8, r['time_taken_hrs'], keep_decimal=True, num_format='0.00')
             row_no += 1
 
         # =====================================================
