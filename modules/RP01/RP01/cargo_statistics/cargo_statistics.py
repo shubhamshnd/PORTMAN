@@ -783,51 +783,30 @@ def _fetch_daily_port_operations(selected_date):
         }
 
         # ------------------------------------------------------------
-        # 3) MBC discharge — last 24 hrs for every day.
+        # 3) MBC discharge — daily quantities from lueu_lines.
         # ------------------------------------------------------------
-        #
-        # For a report date D:
-        #     08:00 on D-1 -> 08:00 on D
-        #
-        # lueu_lines stores the MBC SMS quantities by entry_date, so the
-        # first/last calendar dates are handled separately to preserve the
-        # 24-hour cutoff.
-        mbc_by_day = {}
+        cur.execute(
+            """
+            SELECT
+                TO_DATE(entry_date, 'YYYY-MM-DD') AS report_day,
+                COALESCE(SUM(quantity), 0) AS qty
+            FROM lueu_lines
+            WHERE source_type = 'MBC'
+              AND is_deleted = false
+              AND TO_DATE(entry_date, 'YYYY-MM-DD')
+                    BETWEEN %s AND %s
+            GROUP BY TO_DATE(entry_date, 'YYYY-MM-DD')
+            ORDER BY report_day
+            """,
+            (month_start, selected_date),
+        )
 
-        day_cursor = month_start
-        while day_cursor <= selected_date:
-            window_end = datetime.combine(
-                day_cursor,
-                datetime.min.time(),
-            ).replace(hour=8)
+        mbc_rows = cur.fetchall()
 
-            window_start = window_end - timedelta(hours=24)
-
-            # The current MBC SMS table stores entry_date as a date string.
-            # Sum the SMS date belonging to the 24-hour reporting day.
-            #
-            # For the normal 08:00 -> 08:00 reporting convention this is
-            # the previous calendar date.
-            mbc_target_date = day_cursor - timedelta(days=1)
-
-            cur.execute(
-                """
-                SELECT
-                    COALESCE(SUM(COALESCE(quantity, 0)), 0) AS qty
-                FROM lueu_lines
-                WHERE source_type = 'MBC'
-                  AND TO_DATE(entry_date, 'YYYY-MM-DD') = %s
-                """,
-                (mbc_target_date,),
-            )
-
-            mbc_row = cur.fetchone()
-            mbc_by_day[day_cursor] = round(
-                _safe_float(mbc_row["qty"] if mbc_row else 0),
-                2,
-            )
-
-            day_cursor += timedelta(days=1)
+        mbc_by_day = {
+            row["report_day"]: round(_safe_float(row["qty"]), 2)
+            for row in mbc_rows
+        }
 
         # ------------------------------------------------------------
         # 4) Daily Consumption from stats_cargo / consumption.
