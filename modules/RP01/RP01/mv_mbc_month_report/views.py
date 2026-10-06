@@ -114,10 +114,10 @@ def _fetch_mv_monthly_data(
 
         COALESCE(
             CASE
-                WHEN l.source_type = 'VCN'
+                WHEN l.source_type = 'VCN' AND v.id IS NOT NULL
                     THEN CONCAT(v.vcn_doc_num, ' / ', v.vessel_name)
 
-                WHEN l.source_type = 'MBC'
+                WHEN l.source_type = 'MBC' AND m.id IS NOT NULL
                     THEN CONCAT(m.doc_num, ' / ', m.mbc_name)
 
                 ELSE COALESCE(l.barge_name, 'Unknown')
@@ -180,7 +180,32 @@ def _fetch_mv_monthly_data(
             ELSE 'Unknown'
         END AS company
 
-    FROM lueu_lines l
+    FROM (
+        SELECT id, quantity, source_type, cargo_name, barge_name, operation_type, source_id, entry_date::date AS entry_date
+        FROM lueu_lines
+        WHERE is_deleted IS NOT TRUE AND entry_date >= '2026-05-01'
+        
+        UNION ALL
+        
+        SELECT h.id, h.quantity, 
+               CASE WHEN v.id IS NOT NULL THEN 'VCN' ELSE 'MBC' END AS source_type,
+               h.cargo_name, COALESCE(h.barge_name, h.source_display) AS barge_name, NULL AS operation_type, 
+               COALESCE(v.id, m.id) AS source_id, 
+               h.entry_date::date AS entry_date
+        FROM rp01_historical_lueu h
+        LEFT JOIN LATERAL (
+            SELECT id FROM vcn_header 
+            WHERE (UPPER(TRIM(h.source_display)) = UPPER(TRIM(vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(vessel_name)), '%%'))
+            LIMIT 1
+        ) v ON true
+        LEFT JOIN LATERAL (
+            SELECT id FROM mbc_header 
+            WHERE UPPER(TRIM(h.source_display)) = UPPER(TRIM(mbc_name))
+            LIMIT 1
+        ) m ON true 
+            AND UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC'
+        WHERE h.entry_date::text < '2026-05-01'
+    ) l
 
     LEFT JOIN vcn_header v
         ON l.source_type = 'VCN'
@@ -229,8 +254,7 @@ def _fetch_mv_monthly_data(
     ) mc_total
         ON m.id = mc_total.mbc_id
 
-    WHERE l.is_deleted IS NOT TRUE
-      AND l.quantity IS NOT NULL
+    WHERE l.quantity IS NOT NULL
       AND l.quantity > 0
       AND l.source_type IN ('VCN', 'MBC')
     """
@@ -317,10 +341,10 @@ def _fetch_mv_monthly_data(
     SELECT
         COALESCE(
             CASE
-                WHEN l.source_type = 'VCN'
+                WHEN l.source_type = 'VCN' AND v.id IS NOT NULL
                     THEN CONCAT(v.vcn_doc_num, ' / ', v.vessel_name)
 
-                WHEN l.source_type = 'MBC'
+                WHEN l.source_type = 'MBC' AND m.id IS NOT NULL
                     THEN CONCAT(m.doc_num, ' / ', m.mbc_name)
 
                 ELSE COALESCE(l.barge_name, 'Unknown')
@@ -330,7 +354,32 @@ def _fetch_mv_monthly_data(
 
         COALESCE(SUM(l.quantity), 0) AS prev_qty
 
-    FROM lueu_lines l
+    FROM (
+        SELECT id, quantity, source_type, cargo_name, barge_name, operation_type, source_id, entry_date::date AS entry_date
+        FROM lueu_lines
+        WHERE is_deleted IS NOT TRUE AND entry_date >= '2026-05-01'
+        
+        UNION ALL
+        
+        SELECT h.id, h.quantity, 
+               CASE WHEN v.id IS NOT NULL THEN 'VCN' ELSE 'MBC' END AS source_type,
+               h.cargo_name, COALESCE(h.barge_name, h.source_display) AS barge_name, NULL AS operation_type, 
+               COALESCE(v.id, m.id) AS source_id, 
+               h.entry_date::date AS entry_date
+        FROM rp01_historical_lueu h
+        LEFT JOIN LATERAL (
+            SELECT id FROM vcn_header 
+            WHERE (UPPER(TRIM(h.source_display)) = UPPER(TRIM(vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(vessel_name)), '%%'))
+            LIMIT 1
+        ) v ON true
+        LEFT JOIN LATERAL (
+            SELECT id FROM mbc_header 
+            WHERE UPPER(TRIM(h.source_display)) = UPPER(TRIM(mbc_name))
+            LIMIT 1
+        ) m ON true 
+            AND UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC'
+        WHERE h.entry_date::text < '2026-05-01'
+    ) l
 
     LEFT JOIN vcn_header v
         ON l.source_type = 'VCN'
@@ -343,8 +392,7 @@ def _fetch_mv_monthly_data(
     LEFT JOIN mbc_master mm
         ON UPPER(TRIM(m.mbc_name)) = UPPER(TRIM(mm.mbc_name))
 
-    WHERE l.is_deleted IS NOT TRUE
-      AND l.quantity IS NOT NULL
+    WHERE l.quantity IS NOT NULL
       AND l.quantity > 0
       AND l.source_type IN ('VCN', 'MBC')
       AND l.entry_date <= %s
@@ -567,6 +615,7 @@ def _fetch_cargo_summary(from_date=None, to_date=None):
 
                 WHEN l.source_type = 'MBC'
                     THEN COALESCE(
+                        vcargo.cargo_type,
                         m.cargo_type,
                         m.cargo_name,
                         l.cargo_name
@@ -593,7 +642,32 @@ def _fetch_cargo_summary(from_date=None, to_date=None):
                 ELSE 'Double Handling'
             END AS op_category
 
-        FROM lueu_lines l
+        FROM (
+        SELECT id, quantity, source_type, cargo_name, barge_name, operation_type, source_id, entry_date::date AS entry_date
+        FROM lueu_lines
+        WHERE is_deleted IS NOT TRUE AND entry_date >= '2026-05-01'
+        
+        UNION ALL
+        
+        SELECT h.id, h.quantity, 
+               CASE WHEN v.id IS NOT NULL THEN 'VCN' ELSE 'MBC' END AS source_type,
+               h.cargo_name, COALESCE(h.barge_name, h.source_display) AS barge_name, NULL AS operation_type, 
+               COALESCE(v.id, m.id) AS source_id, 
+               h.entry_date::date AS entry_date
+        FROM rp01_historical_lueu h
+        LEFT JOIN LATERAL (
+            SELECT id FROM vcn_header 
+            WHERE (UPPER(TRIM(h.source_display)) = UPPER(TRIM(vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(vessel_name)), '%%'))
+            LIMIT 1
+        ) v ON true
+        LEFT JOIN LATERAL (
+            SELECT id FROM mbc_header 
+            WHERE UPPER(TRIM(h.source_display)) = UPPER(TRIM(mbc_name))
+            LIMIT 1
+        ) m ON true 
+            AND UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC'
+        WHERE h.entry_date::text < '2026-05-01'
+    ) l
 
         LEFT JOIN vcn_header v
             ON l.source_type = 'VCN'
@@ -602,9 +676,9 @@ def _fetch_cargo_summary(from_date=None, to_date=None):
         LEFT JOIN LATERAL (
             SELECT cargo_type
             FROM vessel_cargo
-            WHERE cargo_name = l.cargo_name
+            WHERE UPPER(TRIM(cargo_name)) = UPPER(TRIM(l.cargo_name))
             LIMIT 1
-        ) vcargo ON l.source_type = 'VCN'
+        ) vcargo ON true
 
         LEFT JOIN mbc_header m
             ON l.source_type = 'MBC'
@@ -613,8 +687,7 @@ def _fetch_cargo_summary(from_date=None, to_date=None):
         LEFT JOIN mbc_master mm
             ON UPPER(TRIM(m.mbc_name)) = UPPER(TRIM(mm.mbc_name))
 
-        WHERE l.is_deleted IS NOT TRUE
-          AND l.quantity IS NOT NULL
+        WHERE l.quantity IS NOT NULL
           AND l.quantity > 0
           AND l.source_type IN ('VCN', 'MBC')
     """
@@ -845,7 +918,11 @@ def _fetch_vessel_call_ledger():
 
             SELECT v.id AS source_id, h.quantity, h.entry_date::text AS entry_date
             FROM rp01_historical_lueu h
-            JOIN vcn_header v ON (UPPER(TRIM(h.source_display)) = UPPER(TRIM(v.vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(v.vessel_name)), '%%'))
+            JOIN LATERAL (
+                SELECT id FROM vcn_header 
+                WHERE (UPPER(TRIM(h.source_display)) = UPPER(TRIM(vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(vessel_name)), '%%'))
+                LIMIT 1
+            ) v ON true
         ) vcn_disc_combined
         GROUP BY source_id
     ) disc ON disc.source_id = v.id
@@ -903,7 +980,11 @@ def _fetch_vessel_call_ledger():
 
             SELECT m.id AS source_id, h.quantity, h.entry_date::text AS entry_date
             FROM rp01_historical_lueu h
-            JOIN mbc_header m ON UPPER(TRIM(h.source_display)) = UPPER(TRIM(m.mbc_name))
+            JOIN LATERAL (
+                SELECT id FROM mbc_header 
+                WHERE UPPER(TRIM(h.source_display)) = UPPER(TRIM(mbc_name))
+                LIMIT 1
+            ) m ON true
         ) mbc_disc_combined
         GROUP BY source_id
     ) disc ON disc.source_id = m.id
@@ -1183,7 +1264,7 @@ def _fetch_ytd_cargo_pivot(reference_date=None):
 
             COALESCE(
                 CASE WHEN l.source_type = 'VCN' THEN vcargo.cargo_type ELSE NULL END,
-                CASE WHEN l.source_type = 'MBC' THEN COALESCE(m.cargo_type, m.cargo_name) ELSE NULL END,
+                CASE WHEN l.source_type = 'MBC' THEN COALESCE(vcargo.cargo_type, m.cargo_type, m.cargo_name) ELSE NULL END,
                 l.cargo_name,
                 'Unknown'
             ) AS cargo_type,
@@ -1206,53 +1287,51 @@ def _fetch_ytd_cargo_pivot(reference_date=None):
                 ELSE 'Double Handling'
             END AS row_category
 
-        FROM lueu_lines l
+        FROM (
+            SELECT id, quantity, source_type, cargo_name, barge_name, operation_type, source_id, entry_date::date AS entry_date
+            FROM lueu_lines
+            WHERE is_deleted IS NOT TRUE AND entry_date >= '2026-05-01'
+            
+            UNION ALL
+            
+            SELECT h.id, h.quantity, 
+                   CASE WHEN v.id IS NOT NULL THEN 'VCN' ELSE 'MBC' END AS source_type,
+                   h.cargo_name, COALESCE(h.barge_name, h.source_display) AS barge_name, NULL AS operation_type, 
+                   COALESCE(v.id, m.id) AS source_id, 
+                   h.entry_date::date AS entry_date
+            FROM rp01_historical_lueu h
+            LEFT JOIN LATERAL (
+            SELECT id FROM vcn_header 
+            WHERE (UPPER(TRIM(h.source_display)) = UPPER(TRIM(vessel_name)) OR UPPER(TRIM(h.source_display)) LIKE CONCAT('%%', UPPER(TRIM(vessel_name)), '%%'))
+            LIMIT 1
+        ) v ON true 
+            LEFT JOIN LATERAL (
+            SELECT id FROM mbc_header 
+            WHERE UPPER(TRIM(h.source_display)) = UPPER(TRIM(mbc_name))
+            LIMIT 1
+        ) m ON true 
+            WHERE h.entry_date::text < '2026-05-01'
+        ) l
 
         LEFT JOIN vcn_header v
             ON l.source_type = 'VCN' AND l.source_id = v.id
         LEFT JOIN LATERAL (
             SELECT cargo_type FROM vessel_cargo
-            WHERE cargo_name = l.cargo_name
+            WHERE UPPER(TRIM(cargo_name)) = UPPER(TRIM(l.cargo_name))
             LIMIT 1
-        ) vcargo ON l.source_type = 'VCN'
+        ) vcargo ON true
         LEFT JOIN mbc_header m
             ON l.source_type = 'MBC' AND l.source_id = m.id
         LEFT JOIN mbc_master mm
             ON UPPER(TRIM(m.mbc_name)) = UPPER(TRIM(mm.mbc_name))
 
-        WHERE l.is_deleted IS NOT TRUE
-          AND l.quantity IS NOT NULL
+        WHERE l.quantity IS NOT NULL
           AND l.quantity > 0
           AND l.entry_date >= %s
           AND l.entry_date <= %s
-
-        UNION ALL
-
-        SELECT
-            h.entry_date::text AS entry_date,
-            h.quantity,
-            'HISTORICAL' AS source_type,
-            COALESCE(vcargo.cargo_type, h.cargo_name, 'Unknown') AS cargo_type,
-            CASE
-                WHEN UPPER(TRIM(COALESCE(h.mv_mbc, ''))) IN ('MV', 'VCN') THEN 'Mother Vessels Cargo'
-                WHEN UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC' AND UPPER(COALESCE(mm.mbc_owner_name, '')) LIKE '%%SHIPPING%%' THEN 'Shipping'
-                WHEN UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC' AND UPPER(COALESCE(mm.mbc_owner_name, '')) LIKE '%%INFRA%%' THEN 'Jsw Infrastructre'
-                WHEN UPPER(TRIM(COALESCE(h.mv_mbc, ''))) = 'MBC' THEN 'Jaigad-Other MBC'
-                ELSE 'Double Handling'
-            END AS row_category
-        FROM rp01_historical_lueu h
-        LEFT JOIN LATERAL (
-            SELECT cargo_type FROM vessel_cargo
-            WHERE UPPER(TRIM(cargo_name)) = UPPER(TRIM(h.cargo_name))
-            LIMIT 1
-        ) vcargo ON true
-        LEFT JOIN mbc_master mm
-            ON UPPER(TRIM(h.source_display)) = UPPER(TRIM(mm.mbc_name))
-        WHERE h.quantity IS NOT NULL AND h.quantity > 0
-          AND h.entry_date::text >= %s AND h.entry_date::text <= %s
     """
 
-    cur.execute(sql, [from_date, to_date, from_date, to_date])
+    cur.execute(sql, [from_date, to_date])
     rows = cur.fetchall()
     conn.close()
 
