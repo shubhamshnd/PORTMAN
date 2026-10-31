@@ -144,6 +144,38 @@ html, body {
 .hdr-btn:hover { border-color:#fff; background:rgba(255,255,255,.2); }
 .hdr-btn.active { border-color:#3EF0C8; color:var(--ocean-deep); background:#3EF0C8; }
 
+.hdr-ert-btn {
+  display:inline-flex; align-items:center; gap:7px;
+  background:linear-gradient(135deg, rgba(220,38,38,0.32), rgba(185,28,28,0.18));
+  border:1px solid rgba(248,113,113,0.55);
+  color:#fff;
+  font-family:'Space Grotesk', 'Inter', sans-serif;
+  font-size:11px; font-weight:700; letter-spacing:0.8px; text-transform:uppercase;
+  padding:7px 14px; border-radius:20px;
+  text-decoration:none; cursor:pointer;
+  position:relative; z-index:1; backdrop-filter:blur(4px);
+  transition:all .2s ease;
+  box-shadow:0 2px 10px rgba(220,38,38,0.25);
+}
+.hdr-ert-btn:hover {
+  background:linear-gradient(135deg, rgba(220,38,38,0.5), rgba(185,28,28,0.35));
+  border-color:rgba(252,165,165,0.9);
+  box-shadow:0 4px 16px rgba(220,38,38,0.45);
+  transform:translateY(-1px);
+  color:#fff;
+  text-decoration:none;
+}
+.hdr-ert-dot {
+  width:7px; height:7px; border-radius:50%;
+  background:#ef4444;
+  box-shadow:0 0 0 0 rgba(239,68,68,0.7);
+  animation:ertPulse 1.8s ease-in-out infinite;
+}
+@keyframes ertPulse {
+  0%, 100% { box-shadow:0 0 0 0 rgba(239,68,68,0.75); }
+  50% { box-shadow:0 0 0 6px rgba(239,68,68,0); }
+}
+
 /* ── LAYOUT ── */
 #app {
   height:calc(100vh - var(--hdr-h) - var(--ftr-h));
@@ -512,6 +544,10 @@ html, body {
   <div class="hdr-tag">RP01</div>
   <div class="hdr-live"><div class="hdr-live-dot"></div>Port Overview</div>
   <div class="hdr-flex"></div>
+  <a href="http://10.5.53.233:5005/ert" target="_blank" rel="noopener noreferrer" class="hdr-btn hdr-ert-btn" id="hdr-ert-btn" title="Open Active ERT">
+    <span class="hdr-ert-dot"></span>
+    <span>ACTIVE ERT</span>
+  </a>
   <div class="hdr-shift hdr-fyend" id="hdr-fyend" role="button" tabindex="0"
        title="Open throughput forecast"
        onclick="openForecast()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openForecast();}">
