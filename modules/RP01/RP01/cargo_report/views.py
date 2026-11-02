@@ -70,6 +70,449 @@ CARGO_BACKDATED_FROM = date(2026, 4, 1)
 CARGO_LIVE_FROM = date(2026, 7, 1)
 
 
+
+# =========================================================
+# LIVE CARGO QUERY (Import + Export, MBC + MV)
+# =========================================================
+LIVE_CARGO_QUERY = """
+        SELECT
+            h.id,
+            cd.id AS customer_detail_id,
+
+            COALESCE(h.doc_num, '-') || ' / ' ||
+            COALESCE(h.mbc_name, '-') AS vessel_name,
+
+            'MBC' AS vessel_type,
+
+            COALESCE(h.operation_type, '-') AS operation_type,
+
+            h.cargo_type,
+
+            h.cargo_name,
+
+            COALESCE(cd.quantity, h.bl_quantity, 0) AS bl_qty_mt,
+
+            COALESCE(mbc.actual_discharge, 0) AS actual_discharge,
+
+            h.load_port,
+
+            cd.material_po AS material_po,
+
+            cd.customer_name AS consignee,
+
+            COALESCE(dp.unloading_commenced, elp.loading_commenced)::text AS discharge_commenced,
+
+            CASE
+                WHEN COALESCE(dp.unloading_commenced, elp.loading_commenced) IS NOT NULL
+                     AND COALESCE(dp.unloading_completed, elp.loading_completed) IS NULL
+                THEN 'InProgress'
+                ELSE COALESCE(dp.unloading_completed, elp.loading_completed)::text
+            END AS discharge_completed,
+
+            'INDIA' AS flag,
+
+            COALESCE(inv.invoice_numbers, '') AS invoice_number,
+
+            COALESCE(h.doc_status, '-') AS status
+
+        FROM mbc_header h
+
+        LEFT JOIN vessels v
+            ON LOWER(TRIM(v.vessel_name)) =
+               LOWER(TRIM(h.mbc_name))
+
+        LEFT JOIN (
+            SELECT
+                mbc_id,
+
+                MIN(
+                    NULLIF(TRIM(unloading_commenced), '')::timestamp
+                ) AS unloading_commenced,
+
+                CASE
+                    WHEN SUM(
+                        CASE
+                            WHEN NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
+                             AND NULLIF(TRIM(unloading_completed), '') IS NULL
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) > 0
+                    THEN NULL
+                    ELSE MAX(
+                        NULLIF(TRIM(unloading_completed), '')::timestamp
+                    )
+                END AS unloading_completed
+
+            FROM mbc_discharge_port_lines
+            GROUP BY mbc_id
+        ) dp
+            ON dp.mbc_id = h.id
+
+        LEFT JOIN (
+            SELECT
+                mbc_id,
+
+                MIN(
+                    NULLIF(TRIM(loading_commenced), '')::timestamp
+                ) AS loading_commenced,
+
+                CASE
+                    WHEN SUM(
+                        CASE
+                            WHEN NULLIF(TRIM(loading_commenced), '') IS NOT NULL
+                             AND NULLIF(TRIM(loading_completed), '') IS NULL
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) > 0
+                    THEN NULL
+                    ELSE MAX(
+                        NULLIF(TRIM(loading_completed), '')::timestamp
+                    )
+                END AS loading_completed
+
+            FROM mbc_export_load_port_lines
+            GROUP BY mbc_id
+        ) elp
+            ON elp.mbc_id = h.id
+
+        LEFT JOIN mbc_customer_details cd
+            ON cd.mbc_id = h.id
+
+        LEFT JOIN (
+            SELECT
+                source_id,
+                SUM(COALESCE(quantity, 0)) AS actual_discharge
+            FROM lueu_lines
+            WHERE source_type = 'MBC'
+              AND is_deleted = false
+            GROUP BY source_id
+        ) mbc
+            ON mbc.source_id = h.id
+
+        LEFT JOIN LATERAL (
+            SELECT
+                STRING_AGG(
+                    DISTINCT ih.invoice_number,
+                    ', ' ORDER BY ih.invoice_number
+                ) AS invoice_numbers,
+
+                STRING_AGG(
+                    DISTINCT ih.invoice_status,
+                    ', ' ORDER BY ih.invoice_status
+                ) AS invoice_statuses
+
+            FROM invoice_lines il
+            JOIN invoice_header ih
+                ON ih.id = il.invoice_id
+
+            WHERE cd.bill_id IS NOT NULL
+              AND il.bill_id = cd.bill_id
+        ) inv ON TRUE
+
+        WHERE COALESCE(dp.unloading_commenced, elp.loading_commenced) IS NOT NULL
+          AND COALESCE(dp.unloading_commenced, elp.loading_commenced) >= DATE '2026-05-01'
+          AND (
+                (
+                    COALESCE(dp.unloading_commenced, elp.loading_commenced) BETWEEN
+                        (%s::date + INTERVAL '6 hours')
+                    AND
+                        (%s::date + INTERVAL '6 hours')
+                )
+                OR
+                (
+                    COALESCE(dp.unloading_completed, elp.loading_completed) IS NOT NULL
+                    AND COALESCE(dp.unloading_completed, elp.loading_completed) BETWEEN
+                        (%s::date + INTERVAL '6 hours')
+                    AND
+                        (%s::date + INTERVAL '6 hours')
+                )
+          )
+
+        GROUP BY
+            h.id,
+            cd.id,
+            h.doc_num,
+            h.mbc_name,
+            h.operation_type,
+            h.cargo_type,
+            h.cargo_name,
+            h.bl_quantity,
+            cd.quantity,
+            h.load_port,
+            cd.material_po,
+            cd.customer_name,
+            dp.unloading_commenced,
+            dp.unloading_completed,
+            elp.loading_commenced,
+            elp.loading_completed,
+            v.nationality,
+            mbc.actual_discharge,
+            inv.invoice_numbers,
+            inv.invoice_statuses
+
+        UNION ALL
+
+        SELECT
+            COALESCE(lh.id, vh.id) AS id,
+
+            0 AS customer_detail_id,
+
+            COALESCE(vh.vcn_doc_num, '-') || ' / ' ||
+            COALESCE(lh.vessel_name, vh.vessel_name, '-') AS vessel_name,
+
+            'MV' AS vessel_type,
+
+            COALESCE(vh.operation_type, lh.operation_type, '-') AS operation_type,
+
+            vh.cargo_type AS cargo_type,
+
+            COALESCE(vc.cargo_name, '-') AS cargo_name,
+
+            COALESCE(vc.bl_quantity, 0) AS bl_qty_mt,
+
+            COALESCE(mv.actual_discharge, 0) AS actual_discharge,
+
+            vh.load_port AS load_port,
+
+            lh.material_po_number AS material_po,
+
+            COALESCE(vc.customer_name, vh.importer_exporter_name, '-') AS consignee,
+
+            COALESCE(
+                la.first_discharge_started,
+                lvo.min_start,
+                NULLIF(TRIM(lh.discharge_commenced::text), '')::timestamp,
+                va.first_anchorage_arrival,
+                CASE WHEN vh.doc_date IS NOT NULL THEN vh.doc_date::timestamp + INTERVAL '6 hours' END
+            )::text AS discharge_commenced,
+
+            CASE
+                WHEN COALESCE(la.last_discharge_completed, lvo.max_end, NULLIF(TRIM(lh.discharge_completed::text), '')::timestamp, va.last_anchorage_departure) IS NOT NULL
+                THEN COALESCE(la.last_discharge_completed, lvo.max_end, NULLIF(TRIM(lh.discharge_completed::text), '')::timestamp, va.last_anchorage_departure)::text
+                ELSE 'InProgress'
+            END AS discharge_completed,
+
+            COALESCE(v.nationality, '-') AS flag,
+
+            COALESCE(inv_mv.invoice_numbers, '') AS invoice_number,
+
+            COALESCE(vh.doc_status, '-') AS status
+
+        FROM vcn_header vh
+
+        LEFT JOIN ldud_header lh
+            ON lh.vcn_id = vh.id
+
+        LEFT JOIN (
+            SELECT
+                ldud_id,
+
+                MIN(discharge_started)
+                    AS first_discharge_started,
+
+                CASE
+                    WHEN SUM(
+                        CASE
+                            WHEN discharge_started IS NOT NULL
+                             AND discharge_commenced IS NULL
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) > 0
+                    THEN NULL
+
+                    ELSE MAX(discharge_commenced)
+
+                END AS last_discharge_completed
+
+            FROM ldud_anchorage
+
+            GROUP BY ldud_id
+
+        ) la
+            ON la.ldud_id = lh.id
+
+        LEFT JOIN (
+            SELECT
+                ldud_id,
+                MIN(NULLIF(TRIM(start_time), '')::timestamp) AS min_start,
+                MAX(NULLIF(TRIM(end_time), '')::timestamp) AS max_end
+            FROM ldud_vessel_operations
+            GROUP BY ldud_id
+        ) lvo
+            ON lvo.ldud_id = lh.id
+
+        LEFT JOIN (
+            SELECT
+                vcn_id,
+                MIN(NULLIF(TRIM(anchorage_arrival), '')::timestamp) AS first_anchorage_arrival,
+                MAX(NULLIF(TRIM(anchorage_departure), '')::timestamp) AS last_anchorage_departure
+            FROM vcn_anchorage
+            GROUP BY vcn_id
+        ) va
+            ON va.vcn_id = vh.id
+
+        LEFT JOIN vessels v
+            ON LOWER(TRIM(v.vessel_name)) =
+               LOWER(TRIM(COALESCE(lh.vessel_name, vh.vessel_name)))
+
+        LEFT JOIN (
+            SELECT vcn_id, cargo_name, bl_quantity, customer_name FROM vcn_cargo_declaration
+            UNION ALL
+            SELECT vcn_id, cargo_name, bl_quantity, customer_name FROM vcn_export_cargo_declaration
+        ) vc
+            ON vc.vcn_id = vh.id
+
+        LEFT JOIN (
+            SELECT
+                LOWER(
+                    REGEXP_REPLACE(
+                        TRIM(source_display),
+                        '\\s+',
+                        ' ',
+                        'g'
+                    )
+                ) AS match_display,
+
+                LOWER(TRIM(cargo_name))
+                    AS match_cargo,
+
+                SUM(
+                    COALESCE(
+                        quantity,
+                        split_quantity,
+                        0
+                    )
+                ) AS actual_discharge
+
+            FROM lueu_lines
+
+            WHERE source_type = 'VCN'
+              AND is_deleted = false
+
+            GROUP BY
+                LOWER(
+                    REGEXP_REPLACE(
+                        TRIM(source_display),
+                        '\\s+',
+                        ' ',
+                        'g'
+                    )
+                ),
+
+                LOWER(TRIM(cargo_name))
+
+        ) mv
+            ON mv.match_display =
+               LOWER(
+                   REGEXP_REPLACE(
+                       TRIM(
+                           COALESCE(vh.vcn_doc_num, '') ||
+                           ' / ' ||
+                           COALESCE(lh.vessel_name, vh.vessel_name, '')
+                       ),
+                       '\\s+',
+                       ' ',
+                       'g'
+                   )
+               )
+           AND mv.match_cargo =
+               LOWER(TRIM(COALESCE(vc.cargo_name, '')))
+
+        LEFT JOIN LATERAL (
+            SELECT
+                STRING_AGG(
+                    DISTINCT ih.invoice_number,
+                    ', ' ORDER BY ih.invoice_number
+                ) AS invoice_numbers,
+                STRING_AGG(
+                    DISTINCT ih.invoice_status,
+                    ', ' ORDER BY ih.invoice_status
+                ) AS invoice_statuses
+            FROM invoice_header ih
+            WHERE NULLIF(TRIM(ih.vessel_call_no), '') IS NOT NULL
+              AND LOWER(TRIM(ih.vessel_call_no)) =
+                  LOWER(TRIM(vh.vcn_doc_num))
+              AND COALESCE(ih.is_cancelled, 0) = 0
+        ) inv_mv ON TRUE
+
+        WHERE (
+            COALESCE(
+                la.first_discharge_started,
+                lvo.min_start,
+                NULLIF(TRIM(lh.discharge_commenced::text), '')::timestamp,
+                va.first_anchorage_arrival,
+                CASE WHEN vh.doc_date IS NOT NULL THEN vh.doc_date::timestamp + INTERVAL '6 hours' END
+            ) IS NOT NULL
+        )
+          AND (
+            COALESCE(
+                la.first_discharge_started,
+                lvo.min_start,
+                NULLIF(TRIM(lh.discharge_commenced::text), '')::timestamp,
+                va.first_anchorage_arrival,
+                CASE WHEN vh.doc_date IS NOT NULL THEN vh.doc_date::timestamp + INTERVAL '6 hours' END
+            ) >= DATE '2026-05-01'
+          )
+          AND (
+            (
+                COALESCE(
+                    la.first_discharge_started,
+                    lvo.min_start,
+                    NULLIF(TRIM(lh.discharge_commenced::text), '')::timestamp,
+                    va.first_anchorage_arrival,
+                    CASE WHEN vh.doc_date IS NOT NULL THEN vh.doc_date::timestamp + INTERVAL '6 hours' END
+                ) BETWEEN
+                    (%s::date + INTERVAL '6 hours')
+                AND
+                    (%s::date + INTERVAL '6 hours')
+            )
+            OR
+            (
+                COALESCE(la.last_discharge_completed, lvo.max_end, NULLIF(TRIM(lh.discharge_completed::text), '')::timestamp, va.last_anchorage_departure) IS NOT NULL
+                AND COALESCE(la.last_discharge_completed, lvo.max_end, NULLIF(TRIM(lh.discharge_completed::text), '')::timestamp, va.last_anchorage_departure) BETWEEN
+                    (%s::date + INTERVAL '6 hours')
+                AND
+                    (%s::date + INTERVAL '6 hours')
+            )
+          )
+
+        GROUP BY
+            lh.id,
+            vh.id,
+            vh.vcn_doc_num,
+            lh.vessel_name,
+            vh.vessel_name,
+            vh.operation_type,
+            lh.operation_type,
+            vh.cargo_type,
+            vc.cargo_name,
+            vc.bl_quantity,
+            vh.load_port,
+            lh.material_po_number,
+            vc.customer_name,
+            vh.importer_exporter_name,
+            la.first_discharge_started,
+            la.last_discharge_completed,
+            lvo.min_start,
+            lvo.max_end,
+            lh.discharge_commenced,
+            lh.discharge_completed,
+            va.first_anchorage_arrival,
+            va.last_anchorage_departure,
+            vh.doc_date,
+            v.nationality,
+            mv.actual_discharge,
+            inv_mv.invoice_numbers,
+            inv_mv.invoice_statuses,
+            vh.doc_status
+
+        ORDER BY discharge_commenced DESC;
+"""
+
+
 def _parse_report_date(value):
     try:
         return datetime.strptime(str(value).strip(), '%Y-%m-%d').date()
@@ -201,6 +644,13 @@ def _debug_live_cargo_data(cur, from_date, to_date):
 
     count = _debug_count(cur, """
         SELECT COUNT(*) AS count
+        FROM mbc_export_load_port_lines
+        WHERE NULLIF(TRIM(loading_commenced), '') IS NOT NULL
+    """)
+    print("MBC EXPORT WITH LOADING COMMENCED:", count)
+
+    count = _debug_count(cur, """
+        SELECT COUNT(*) AS count
         FROM mbc_discharge_port_lines
         WHERE NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
           AND NULLIF(TRIM(unloading_commenced), '')::timestamp >= %s::date
@@ -323,413 +773,7 @@ def get_cargo_report():
 
     try:
 
-        query = """
-        SELECT
-            h.id,
-            cd.id AS customer_detail_id,
-
-            COALESCE(h.doc_num, '-') || ' / ' ||
-            COALESCE(h.mbc_name, '-') AS vessel_name,
-
-            'MBC' AS vessel_type,
-
-            h.cargo_type,
-
-            h.cargo_name,
-
-            COALESCE(cd.quantity, 0) AS bl_qty_mt,
-
-            COALESCE(mbc.actual_discharge, 0) AS actual_discharge,
-
-            h.load_port,
-
-            cd.material_po AS material_po,
-
-            cd.customer_name AS consignee,
-
-            dp.unloading_commenced::text AS discharge_commenced,
-
-            CASE
-                WHEN dp.unloading_commenced IS NOT NULL
-                     AND dp.unloading_completed IS NULL
-                THEN 'InProgress'
-                ELSE dp.unloading_completed::text
-            END AS discharge_completed,
-
-            'INDIA' AS flag,
-
-            COALESCE(inv.invoice_numbers, '') AS invoice_number,
-
-            COALESCE(h.doc_status, '-') AS status
-
-        FROM mbc_header h
-
-        LEFT JOIN vessels v
-            ON LOWER(TRIM(v.vessel_name)) =
-               LOWER(TRIM(h.mbc_name))
-
-        LEFT JOIN (
-            SELECT
-                mbc_id,
-
-                MIN(
-                    NULLIF(TRIM(unloading_commenced), '')::timestamp
-                ) AS unloading_commenced,
-
-                CASE
-                    WHEN SUM(
-                        CASE
-                            WHEN NULLIF(TRIM(unloading_commenced), '') IS NOT NULL
-                             AND NULLIF(TRIM(unloading_completed), '') IS NULL
-                            THEN 1
-                            ELSE 0
-                        END
-                    ) > 0
-                    THEN NULL
-                    ELSE MAX(
-                        NULLIF(TRIM(unloading_completed), '')::timestamp
-                    )
-                END AS unloading_completed
-
-            FROM mbc_discharge_port_lines
-            GROUP BY mbc_id
-        ) dp
-            ON dp.mbc_id = h.id
-
-        LEFT JOIN mbc_customer_details cd
-            ON cd.mbc_id = h.id
-
-        LEFT JOIN (
-            SELECT
-                source_id,
-                SUM(COALESCE(quantity, 0)) AS actual_discharge
-            FROM lueu_lines
-            WHERE source_type = 'MBC'
-              AND is_deleted = false
-            GROUP BY source_id
-        ) mbc
-            ON mbc.source_id = h.id
-
-        /*
-        ============================================================
-        MBC -> INVOICE LINK
-        ============================================================
-        IMPORTANT:
-        Do NOT match invoices using invoice_header.commodity text.
-
-        The exact relationship is:
-
-            mbc_customer_details.material_po
-                    |
-                    +--> mbc_customer_details.bill_id
-                              |
-                              +--> invoice_lines.bill_id
-                                        |
-                                        +--> invoice_header.id
-
-        This prevents one MBC's consolidated invoice from being
-        incorrectly displayed for every Material PO belonging to
-        the same MBC.
-        ============================================================
-        */
-        LEFT JOIN LATERAL (
-            SELECT
-                STRING_AGG(
-                    DISTINCT ih.invoice_number,
-                    ', ' ORDER BY ih.invoice_number
-                ) AS invoice_numbers,
-
-                STRING_AGG(
-                    DISTINCT ih.invoice_status,
-                    ', ' ORDER BY ih.invoice_status
-                ) AS invoice_statuses
-
-            FROM invoice_lines il
-            JOIN invoice_header ih
-                ON ih.id = il.invoice_id
-
-            WHERE cd.bill_id IS NOT NULL
-              AND il.bill_id = cd.bill_id
-        ) inv ON TRUE
-
-
-        /*
-        ============================================================
-        MBC DATE FILTER
-
-        STRICT CUTOFF:
-        Do NOT show anything before 01-May-2026.
-
-        This prevents old April MBCs that are still InProgress
-        from appearing.
-        ============================================================
-        */
-
-        WHERE dp.unloading_commenced IS NOT NULL
-
-          AND dp.unloading_commenced >= DATE '2026-05-01'
-
-          AND (
-                (
-                    dp.unloading_commenced BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-                OR
-
-                (
-                    dp.unloading_completed IS NOT NULL
-
-                    AND dp.unloading_completed BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-          )
-
-
-        GROUP BY
-            h.id,
-            cd.id,
-            h.doc_num,
-            h.mbc_name,
-            h.cargo_type,
-            h.cargo_name,
-            cd.quantity,
-            h.load_port,
-            cd.material_po,
-            cd.customer_name,
-            dp.unloading_commenced,
-            dp.unloading_completed,
-            v.nationality,
-            mbc.actual_discharge,
-            inv.invoice_numbers,
-            inv.invoice_statuses
-
-
-        UNION ALL
-
-
-        SELECT
-            lh.id,
-
-            0 AS customer_detail_id,
-
-            COALESCE(vh.vcn_doc_num, '-') || ' / ' ||
-            COALESCE(lh.vessel_name, '-') AS vessel_name,
-
-            'MV' AS vessel_type,
-
-            vh.cargo_type AS cargo_type,
-
-            vc.cargo_name AS cargo_name,
-
-            COALESCE(vc.bl_quantity, 0) AS bl_qty_mt,
-
-            COALESCE(mv.actual_discharge, 0) AS actual_discharge,
-
-            vh.load_port AS load_port,
-
-            lh.material_po_number AS material_po,
-
-            vc.customer_name AS consignee,
-
-            la.first_discharge_started::text AS discharge_commenced,
-
-            la.last_discharge_completed::text AS discharge_completed,
-
-            COALESCE(v.nationality, '-') AS flag,
-
-            COALESCE(inv_mv.invoice_numbers, '') AS invoice_number,
-
-            COALESCE(vh.doc_status, '-') AS status
-
-
-        FROM ldud_header lh
-
-        LEFT JOIN (
-            SELECT
-                ldud_id,
-
-                MIN(discharge_started)
-                    AS first_discharge_started,
-
-                CASE
-                    WHEN SUM(
-                        CASE
-                            WHEN discharge_started IS NOT NULL
-                             AND discharge_commenced IS NULL
-                            THEN 1
-                            ELSE 0
-                        END
-                    ) > 0
-                    THEN NULL
-
-                    ELSE MAX(discharge_commenced)
-
-                END AS last_discharge_completed
-
-            FROM ldud_anchorage
-
-            GROUP BY ldud_id
-
-        ) la
-            ON la.ldud_id = lh.id
-
-
-        LEFT JOIN vessels v
-            ON LOWER(TRIM(v.vessel_name)) =
-               LOWER(TRIM(lh.vessel_name))
-
-
-        LEFT JOIN vcn_header vh
-            ON vh.id = lh.vcn_id
-
-
-        LEFT JOIN vcn_cargo_declaration vc
-            ON vc.vcn_id = lh.vcn_id
-
-
-        LEFT JOIN (
-            SELECT
-
-                LOWER(
-                    REGEXP_REPLACE(
-                        TRIM(source_display),
-                        '\\s+',
-                        ' ',
-                        'g'
-                    )
-                ) AS match_display,
-
-                LOWER(TRIM(cargo_name))
-                    AS match_cargo,
-
-                SUM(
-                    COALESCE(
-                        quantity,
-                        split_quantity,
-                        0
-                    )
-                ) AS actual_discharge
-
-            FROM lueu_lines
-
-            WHERE source_type = 'VCN'
-              AND is_deleted = false
-
-            GROUP BY
-                LOWER(
-                    REGEXP_REPLACE(
-                        TRIM(source_display),
-                        '\\s+',
-                        ' ',
-                        'g'
-                    )
-                ),
-
-                LOWER(TRIM(cargo_name))
-
-        ) mv
-
-            ON mv.match_display =
-               LOWER(
-                   REGEXP_REPLACE(
-                       TRIM(
-                           COALESCE(vh.vcn_doc_num, '') ||
-                           ' / ' ||
-                           COALESCE(lh.vessel_name, '')
-                       ),
-                       '\\s+',
-                       ' ',
-                       'g'
-                   )
-               )
-
-           AND mv.match_cargo =
-               LOWER(TRIM(vc.cargo_name))
-
-
-        /*
-        MV INVOICE LOOKUP:
-        VCN/MV source -> bill_lines.bill_id
-        -> invoice_lines.bill_id -> invoice_header.id
-        */
-        LEFT JOIN LATERAL (
-            SELECT
-                STRING_AGG(
-                    DISTINCT ih.invoice_number,
-                    ', ' ORDER BY ih.invoice_number
-                ) AS invoice_numbers,
-                STRING_AGG(
-                    DISTINCT ih.invoice_status,
-                    ', ' ORDER BY ih.invoice_status
-                ) AS invoice_statuses
-            FROM invoice_header ih
-            WHERE NULLIF(TRIM(ih.vessel_call_no), '') IS NOT NULL
-              AND LOWER(TRIM(ih.vessel_call_no)) =
-                  LOWER(TRIM(vh.vcn_doc_num))
-              AND COALESCE(ih.is_cancelled, 0) = 0
-        ) inv_mv ON TRUE
-
-
-        /*
-        ============================================================
-        MV DATE FILTER
-
-        STRICT CUTOFF:
-        Do NOT show MV started before 01-May-2026.
-        ============================================================
-        */
-
-        WHERE la.first_discharge_started IS NOT NULL
-
-          AND la.first_discharge_started >= DATE '2026-05-01'
-
-          AND (
-                (
-                    la.first_discharge_started BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-                OR
-
-                (
-                    la.last_discharge_completed IS NOT NULL
-
-                    AND la.last_discharge_completed BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-          )
-
-
-        GROUP BY
-            lh.id,
-            vh.vcn_doc_num,
-            lh.vessel_name,
-            vh.cargo_type,
-            vc.cargo_name,
-            vc.bl_quantity,
-            vh.load_port,
-            lh.material_po_number,
-            vc.customer_name,
-            la.first_discharge_started,
-            la.last_discharge_completed,
-            v.nationality,
-            mv.actual_discharge,
-            inv_mv.invoice_numbers,
-            inv_mv.invoice_statuses,
-            vh.doc_status
-
-
-        ORDER BY discharge_commenced DESC;
-        """
+        query = LIVE_CARGO_QUERY
 
 
         bd_from, bd_to, live_from, live_to, range_error = _split_dates(
@@ -851,6 +895,9 @@ def get_cargo_report():
 
                 'vessel_type':
                     row['vessel_type'] or '-',
+
+                'operation_type':
+                    row.get('operation_type') or '-',
 
                 'material_po':
                     row['material_po'] or '-',
@@ -1038,547 +1085,7 @@ def download_cargo_handling_report():
 
     try:
 
-        query = """
-
-        SELECT
-            h.id,
-
-            COALESCE(h.doc_num, '-') || ' / ' ||
-            COALESCE(h.mbc_name, '-') AS vessel_name,
-
-            'MBC' AS vessel_type,
-
-            h.cargo_type,
-
-            h.cargo_name,
-
-            COALESCE(cd.quantity, 0) AS bl_qty_mt,
-
-            COALESCE(mbc.actual_discharge, 0) AS actual_discharge,
-
-            h.load_port,
-
-            cd.material_po AS material_po,
-
-            cd.customer_name AS consignee,
-
-            dp.unloading_commenced::text AS discharge_commenced,
-
-            CASE
-                WHEN dp.unloading_commenced IS NOT NULL
-                     AND dp.unloading_completed IS NULL
-                THEN 'InProgress'
-
-                ELSE dp.unloading_completed::text
-            END AS discharge_completed,
-
-            COALESCE(v.nationality, '-') AS flag,
-
-            COALESCE(inv.invoice_numbers, '') AS invoice_number,
-
-            COALESCE(h.doc_status, '-') AS status
-
-
-        FROM mbc_header h
-
-
-        LEFT JOIN vessels v
-            ON LOWER(TRIM(v.vessel_name)) =
-               LOWER(TRIM(h.mbc_name))
-
-
-        LEFT JOIN (
-            SELECT
-
-                mbc_id,
-
-                MIN(
-                    NULLIF(
-                        TRIM(unloading_commenced),
-                        ''
-                    )::timestamp
-                ) AS unloading_commenced,
-
-
-                CASE
-
-                    WHEN SUM(
-                        CASE
-
-                            WHEN NULLIF(
-                                TRIM(unloading_commenced),
-                                ''
-                            ) IS NOT NULL
-
-                            AND NULLIF(
-                                TRIM(unloading_completed),
-                                ''
-                            ) IS NULL
-
-                            THEN 1
-
-                            ELSE 0
-
-                        END
-                    ) > 0
-
-                    THEN NULL
-
-
-                    ELSE MAX(
-                        NULLIF(
-                            TRIM(unloading_completed),
-                            ''
-                        )::timestamp
-                    )
-
-                END AS unloading_completed
-
-
-            FROM mbc_discharge_port_lines
-
-            GROUP BY mbc_id
-
-        ) dp
-
-            ON dp.mbc_id = h.id
-
-
-        LEFT JOIN mbc_customer_details cd
-            ON cd.mbc_id = h.id
-
-
-        LEFT JOIN (
-            SELECT
-
-                source_id,
-
-                SUM(
-                    COALESCE(quantity, 0)
-                ) AS actual_discharge
-
-            FROM lueu_lines
-
-            WHERE source_type = 'MBC'
-
-              AND is_deleted = false
-
-            GROUP BY source_id
-
-        ) mbc
-
-            ON mbc.source_id = h.id
-
-
-        /*
-        ============================================================
-        MBC -> INVOICE LINK
-        ============================================================
-        Use the actual billing relationship through
-        mbc_customer_details.bill_id.
-
-        DO NOT use invoice_header.commodity text matching here.
-        ============================================================
-        */
-        LEFT JOIN LATERAL (
-            SELECT
-                STRING_AGG(
-                    DISTINCT ih.invoice_number,
-                    ', ' ORDER BY ih.invoice_number
-                ) AS invoice_numbers,
-
-                STRING_AGG(
-                    DISTINCT ih.invoice_status,
-                    ', ' ORDER BY ih.invoice_status
-                ) AS invoice_statuses
-
-            FROM invoice_lines il
-            JOIN invoice_header ih
-                ON ih.id = il.invoice_id
-
-            WHERE cd.bill_id IS NOT NULL
-              AND il.bill_id = cd.bill_id
-        ) inv ON TRUE
-
-
-        WHERE dp.unloading_commenced IS NOT NULL
-
-          AND dp.unloading_commenced >= DATE '2026-05-01'
-
-          AND (
-
-                /* MBC COMMENCED INSIDE SELECTED PERIOD */
-
-                (
-                    dp.unloading_commenced BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-
-                OR
-
-
-                /* MBC STARTED BEFORE PERIOD BUT COMPLETED
-                   INSIDE SELECTED PERIOD */
-
-                (
-                    dp.unloading_completed IS NOT NULL
-
-                    AND dp.unloading_completed BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-          )
-
-
-        GROUP BY
-
-            h.id,
-
-            h.doc_num,
-
-            h.mbc_name,
-
-            h.cargo_type,
-
-            h.cargo_name,
-
-            cd.quantity,
-
-            h.load_port,
-
-            cd.material_po,
-
-            cd.customer_name,
-
-            dp.unloading_commenced,
-
-            dp.unloading_completed,
-
-            v.nationality,
-
-            mbc.actual_discharge,
-
-            inv.invoice_numbers,
-
-            inv.invoice_statuses
-
-
-        UNION ALL
-
-
-        SELECT
-
-            lh.id,
-
-
-            COALESCE(vh.vcn_doc_num, '-') || ' / ' ||
-            COALESCE(lh.vessel_name, '-') AS vessel_name,
-
-
-            'MV' AS vessel_type,
-
-
-            vh.cargo_type AS cargo_type,
-
-
-            vc.cargo_name AS cargo_name,
-
-
-            COALESCE(
-                vc.bl_quantity,
-                0
-            ) AS bl_qty_mt,
-
-
-            COALESCE(
-                mv.actual_discharge,
-                0
-            ) AS actual_discharge,
-
-
-            vh.load_port AS load_port,
-
-
-            lh.material_po_number AS material_po,
-
-
-            vc.customer_name AS consignee,
-
-
-            la.first_discharge_started::text
-                AS discharge_commenced,
-
-
-            la.last_discharge_completed::text
-                AS discharge_completed,
-
-
-            COALESCE(
-                v.nationality,
-                '-'
-            ) AS flag,
-
-
-            COALESCE(inv_mv.invoice_numbers, '') AS invoice_number,
-
-
-            COALESCE(
-                vh.doc_status,
-                '-'
-            ) AS status
-
-
-        FROM ldud_header lh
-
-
-
-        LEFT JOIN (
-            SELECT
-
-                ldud_id,
-
-
-                MIN(
-                    discharge_started
-                ) AS first_discharge_started,
-
-
-                CASE
-
-                    WHEN SUM(
-                        CASE
-
-                            WHEN discharge_started IS NOT NULL
-
-                             AND discharge_commenced IS NULL
-
-                            THEN 1
-
-                            ELSE 0
-
-                        END
-                    ) > 0
-
-                    THEN NULL
-
-
-                    ELSE MAX(
-                        discharge_commenced
-                    )
-
-                END AS last_discharge_completed
-
-
-            FROM ldud_anchorage
-
-            GROUP BY ldud_id
-
-        ) la
-
-            ON la.ldud_id = lh.id
-
-
-        LEFT JOIN vessels v
-
-            ON LOWER(TRIM(v.vessel_name)) =
-               LOWER(TRIM(lh.vessel_name))
-
-
-        LEFT JOIN vcn_header vh
-
-            ON vh.id = lh.vcn_id
-
-
-        LEFT JOIN vcn_cargo_declaration vc
-
-            ON vc.vcn_id = lh.vcn_id
-
-
-
-        LEFT JOIN (
-            SELECT
-
-                LOWER(
-                    REGEXP_REPLACE(
-                        TRIM(source_display),
-                        '\\s+',
-                        ' ',
-                        'g'
-                    )
-                ) AS match_display,
-
-
-                LOWER(
-                    TRIM(cargo_name)
-                ) AS match_cargo,
-
-
-                SUM(
-                    COALESCE(
-                        quantity,
-                        split_quantity,
-                        0
-                    )
-                ) AS actual_discharge
-
-
-            FROM lueu_lines
-
-
-            WHERE source_type = 'VCN'
-
-              AND is_deleted = false
-
-
-            GROUP BY
-
-                LOWER(
-                    REGEXP_REPLACE(
-                        TRIM(source_display),
-                        '\\s+',
-                        ' ',
-                        'g'
-                    )
-                ),
-
-                LOWER(
-                    TRIM(cargo_name)
-                )
-
-        ) mv
-
-
-            ON mv.match_display =
-
-               LOWER(
-                   REGEXP_REPLACE(
-                       TRIM(
-                           COALESCE(
-                               vh.vcn_doc_num,
-                               ''
-                           )
-                           || ' / ' ||
-                           COALESCE(
-                               lh.vessel_name,
-                               ''
-                           )
-                       ),
-
-                       '\\s+',
-                       ' ',
-                       'g'
-                   )
-               )
-
-
-           AND mv.match_cargo =
-
-               LOWER(
-                   TRIM(vc.cargo_name)
-               )
-
-
-
-        /*
-        MV INVOICE LOOKUP:
-        VCN/MV source -> bill_lines.bill_id
-        -> invoice_lines.bill_id -> invoice_header.id
-        */
-        LEFT JOIN LATERAL (
-            SELECT
-                STRING_AGG(
-                    DISTINCT ih.invoice_number,
-                    ', ' ORDER BY ih.invoice_number
-                ) AS invoice_numbers,
-                STRING_AGG(
-                    DISTINCT ih.invoice_status,
-                    ', ' ORDER BY ih.invoice_status
-                ) AS invoice_statuses
-            FROM invoice_header ih
-            WHERE NULLIF(TRIM(ih.vessel_call_no), '') IS NOT NULL
-              AND LOWER(TRIM(ih.vessel_call_no)) =
-                  LOWER(TRIM(vh.vcn_doc_num))
-              AND COALESCE(ih.is_cancelled, 0) = 0
-        ) inv_mv ON TRUE
-
-
-
-        WHERE la.first_discharge_started IS NOT NULL
-
-          AND la.first_discharge_started >= DATE '2026-05-01'
-
-          AND (
-
-                /* MV STARTED INSIDE SELECTED PERIOD */
-
-                (
-                    la.first_discharge_started BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-
-                OR
-
-
-                /* MV STARTED BEFORE PERIOD BUT COMPLETED
-                   INSIDE SELECTED PERIOD */
-
-                (
-                    la.last_discharge_completed IS NOT NULL
-
-                    AND la.last_discharge_completed BETWEEN
-                        (%s::date + INTERVAL '6 hours')
-                    AND
-                        (%s::date + INTERVAL '6 hours')
-                )
-
-          )
-
-
-        GROUP BY
-
-            lh.id,
-
-            vh.vcn_doc_num,
-
-            lh.vessel_name,
-
-            vh.cargo_type,
-
-            vc.cargo_name,
-
-            vc.bl_quantity,
-
-            vh.load_port,
-
-            lh.material_po_number,
-
-            vc.customer_name,
-
-            la.first_discharge_started,
-
-            la.last_discharge_completed,
-
-            v.nationality,
-
-            mv.actual_discharge,
-
-            inv_mv.invoice_numbers,
-            inv_mv.invoice_statuses,
-
-            vh.doc_status
-
-
-        ORDER BY discharge_commenced DESC;
-
-        """
+        query = LIVE_CARGO_QUERY
 
 
 
