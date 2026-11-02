@@ -1,9 +1,9 @@
 """Self-check for the SAP outbound queue retry state machine.
 
 Stubs the SAP HTTP call so no real SAP is touched. Verifies:
-  - a failed attempt increments retry_count and stays 'pending' until exhausted
-  - after max_retries the row flips to 'failed'
-  - a later success flips it to 'sent'
+  - SAP only counts as success on the "Invoice saved in staging table" ack
+  - a failed attempt increments retry_count and stays 'pending' forever (no cap)
+  - a failed manual send re-arms the retry loop; a later success flips it to 'sent'
 Run: python test_sap_queue.py
 """
 import sap_queue
@@ -24,7 +24,35 @@ def _cleanup(qid):
     conn.commit(); conn.close()
 
 
+def _check_staging_ack():
+    class Resp:
+        def __init__(self, text, ok=True):
+            self.text, self.ok, self.status_code = text, ok, 200 if ok else 500
+        def json(self):
+            import json
+            return json.loads(self.text)
+    sap_client.get_active_config = lambda: {'base_url': 'http://x'}
+    sap_client._get_oauth_token = lambda cfg: 'T'
+    sap_client._write_log = lambda *a, **k: 0
+    real_post = sap_client.requests.post
+    try:
+        for text, ok in [
+            ('{"Record":[{"Invoice":"A","Status":"N","Message":"Invoice saved in staging table"}]}', True),
+            ('-', False),
+            ('{"Record":[{"Invoice":"A","Status":"E","Message":"-"}]}', False),
+        ]:
+            sap_client.requests.post = lambda *a, _t=text, **k: Resp(_t)
+            res = sap_client.post_invoice_to_sap({}, 'Invoice', 0, 'A')
+            assert res['ok'] is ok, (text, res)
+            if not ok:
+                assert '-' in res['message'], res['message']
+        print('PASS: only the staging-table ack counts as success')
+    finally:
+        sap_client.requests.post = real_post
+
+
 def run():
+    _check_staging_ack()
     # Don't let enqueue's background trigger race the synchronous worker calls.
     sap_queue.trigger = lambda: None
 
@@ -39,15 +67,18 @@ def run():
     qid = sap_queue.enqueue('test', 'Test', 0, 'SELFCHECK', {'x': 1}, invoice_id=None)
     try:
         # Force the per-item 5-min spacing out of the way each pass.
-        for expected in range(1, sap_queue.MAX_RETRIES + 1):
+        # Past the old 10-try cap it must still be pending and retried.
+        for expected in range(1, sap_queue.MAX_RETRIES + 3):
             _due_now(qid)
             sap_queue.process_sap_queue()
             r = _row(qid)
             assert r['retry_count'] == expected, (expected, r['retry_count'])
-            if expected < sap_queue.MAX_RETRIES:
-                assert r['status'] == 'pending', r['status']
-            else:
-                assert r['status'] == 'failed', r['status']
+            assert r['status'] == 'pending', r['status']
+            assert r['last_error'] == 'stub fail', r['last_error']
+
+        # A failed manual send hands it back to the retry loop.
+        res = sap_queue.manual_send(qid)
+        assert not res['ok'] and _row(qid)['status'] == 'pending', res
 
         # Now SAP recovers; a manual send must post and mark it sent.
         outcome['ok'] = True
@@ -56,7 +87,7 @@ def run():
         r = _row(qid)
         assert r['status'] == 'sent', r['status']
         assert r['sap_document_number'] == 'DOC1', r['sap_document_number']
-        print('PASS: retry -> failed -> manual send -> sent')
+        print('PASS: retry forever -> manual send -> sent')
     finally:
         _cleanup(qid)
 

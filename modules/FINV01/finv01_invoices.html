@@ -109,10 +109,14 @@
             <td>
                 <span class="status status-{{ row.invoice_status|lower|replace(' ', '-') }}">{{ row.invoice_status }}</span>
                 {% if row.sap_queue %}
-                <div style="font-size:9px;margin-top:2px;color:{{ '#c0392b' if row.sap_queue.status == 'failed' else '#2980b9' }};"
-                     title="{{ row.sap_queue.last_error or '' }}">
-                    SAP {{ row.sap_queue.job_type }}: {{ row.sap_queue.status }} · try {{ row.sap_queue.retry_count }}/{{ row.sap_queue.max_retries }}
+                <div style="font-size:9px;margin-top:2px;color:{{ '#c0392b' if row.sap_queue.status == 'failed' else '#2980b9' }};">
+                    SAP {{ row.sap_queue.job_type }}: {{ row.sap_queue.status }} · try {{ row.sap_queue.retry_count }}{% if row.sap_queue.status == 'pending' and row.sap_queue.retry_count %} · retrying every 5 min{% endif %}
                 </div>
+                {% if row.sap_queue.last_error %}
+                <div style="font-size:9px;margin-top:2px;color:#c0392b;max-width:220px;word-break:break-word;">{{ row.sap_queue.last_error }}</div>
+                {% endif %}
+                {% elif row.invoice_status == 'SAP Failed' and row.sap_error %}
+                <div style="font-size:9px;margin-top:2px;color:#c0392b;max-width:220px;word-break:break-word;">{{ row.sap_error }}</div>
                 {% endif %}
             </td>
             <td>{{ row.sap_document_number or '-' }}</td>
@@ -136,7 +140,7 @@
                 {% elif row.invoice_status == 'Queued for SAP' %}
                 <button class="btn btn-secondary" onclick="pushToSAP({{ row.id }}, this)" style="font-size:10px;padding:3px 8px;" title="Queued — the background worker retries automatically every 5 min. Click to send now.">Send Now</button>
                 {% elif row.invoice_status == 'SAP Failed' and not row.sap_document_number %}
-                <button class="btn btn-retry" onclick="pushToSAP({{ row.id }}, this)" style="font-size:10px;padding:3px 8px;" title="All auto-retries used while SAP was unavailable. Click to send manually.">Manual Send</button>
+                <button class="btn btn-retry" onclick="pushToSAP({{ row.id }}, this)" style="font-size:10px;padding:3px 8px;" title="Could not queue for SAP. Click to send manually.">Manual Send</button>
                 {% endif %}
                 {% if row.invoice_status in ('Posted to SAP', 'Posted to GST') %}
                     {% if row.within_cancel_window %}

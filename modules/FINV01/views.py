@@ -207,9 +207,9 @@ def _enqueue_invoice_post(invoice_id, invoice_number):
     """Queue the invoice for async SAP posting (non-blocking).
 
     The payload is built and saved now so the posting survives SAP being down
-    (e.g. Thursday migration windows). The background worker retries it up to
-    10 times, 5 minutes apart; on exhaustion the invoice shows 'SAP Failed'
-    with a Manual Send option. Returns immediately — no synchronous SAP call.
+    (e.g. Thursday migration windows). The background worker retries it every
+    5 minutes until SAP acks "Invoice saved in staging table"; SAP's latest
+    error shows in FINV01. Returns immediately — no synchronous SAP call.
     """
     try:
         invoice = model.get_invoice_by_id(invoice_id)

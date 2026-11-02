@@ -3,14 +3,15 @@ SAP outbound queue — async posting with automatic retry.
 
 Decouples invoice generation / cancellation from the synchronous SAP call.
 Mirrors the mail_service queue: a posting is saved (payload + metadata) and a
-background worker attempts it, retrying up to MAX_RETRIES times spaced
-RETRY_INTERVAL_MIN apart. If every retry fails the row is left 'failed' and a
-user can trigger a manual send. Every attempt is logged to integration_logs by
+background worker attempts it, retrying every RETRY_INTERVAL_MIN until SAP
+acks "Invoice saved in staging table" (no retry cap). last_error carries SAP's
+latest reply for FINV01. Every attempt is logged to integration_logs by
 sap_client, so FSAP01 shows the full history.
 
 Status lifecycle:  pending -> processing -> sent
                                           -> pending (retry, next_attempt_at += 5m)
-                                          -> failed (retries exhausted; manual send)
+                                          -> failed (only when SAP staged it but our
+                                             bookkeeping failed; manual fix)
 """
 import json
 import threading
@@ -19,7 +20,7 @@ from datetime import datetime, timedelta
 from database import get_db, get_cursor
 import sap_client
 
-MAX_RETRIES = 10
+MAX_RETRIES = 10  # ponytail: legacy column value only; the worker ignores it
 RETRY_INTERVAL_MIN = 5
 BATCH = 25
 
@@ -74,7 +75,7 @@ def process_sap_queue():
     conn = get_db()
     cur = get_cursor(conn)
     cur.execute("""SELECT id FROM sap_outbound_queue
-        WHERE status='pending' AND retry_count < max_retries
+        WHERE status='pending'
           AND (next_attempt_at IS NULL OR next_attempt_at <= %s)
         ORDER BY id LIMIT %s""", [datetime.now(), BATCH])
     ids = [r['id'] for r in cur.fetchall()]
@@ -133,8 +134,7 @@ def _attempt(row):
             return
         _mark_sent(row, sap_doc)
     else:
-        final = (row['retry_count'] + 1) >= row['max_retries']
-        _mark_failed(row, result.get('message'), final=final)
+        _mark_failed(row, result.get('message'), final=False)
 
 
 def _mark_sent(row, sap_doc):
@@ -148,7 +148,7 @@ def _mark_sent(row, sap_doc):
 
 
 def _mark_failed(row, msg, final):
-    """Bump retry_count; back to pending (retry in 5m) unless retries exhausted."""
+    """Bump retry_count; back to pending (retry in 5m) unless final."""
     conn = get_db()
     cur = get_cursor(conn)
     cur.execute("""UPDATE sap_outbound_queue
@@ -162,7 +162,7 @@ def _mark_failed(row, msg, final):
          (msg or '')[:1000], datetime.now(), row['id']])
     conn.commit()
     conn.close()
-    # Reflect a fully-exhausted POST on the invoice so the UI shows Manual Send.
+    # Reflect a parked POST on the invoice so the UI shows Manual Send.
     if final and row['job_type'] == 'post' and row.get('invoice_id'):
         _set_invoice_status(row['invoice_id'], 'SAP Failed', msg)
 
@@ -192,13 +192,8 @@ def manual_send(queue_id):
             return {'ok': False, 'error': f'SAP posted but bookkeeping failed: {e}'}
         _mark_sent(row, sap_doc)
         return {'ok': True, 'sap_document_number': sap_doc}
-    # Keep it failed (manual attempts don't re-arm the auto-retry loop).
-    conn = get_db()
-    cur = get_cursor(conn)
-    cur.execute("""UPDATE sap_outbound_queue SET status='failed', last_error=%s, updated_date=%s
-                   WHERE id=%s""", [(result.get('message') or '')[:1000], datetime.now(), queue_id])
-    conn.commit()
-    conn.close()
+    # Not staged: hand it back to the auto-retry loop.
+    _mark_failed(row, result.get('message'), final=False)
     return {'ok': False, 'error': result.get('message')}
 
 

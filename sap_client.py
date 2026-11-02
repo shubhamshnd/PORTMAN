@@ -73,6 +73,17 @@ def _write_log(integration_type, source_type, source_id, source_reference,
     return log_id
 
 
+STAGED_ACK = 'invoice saved in staging table'
+
+
+def _sap_message(body):
+    """Pull SAP's message out of {"Record":[{"Message":..}]} or a flat body."""
+    rec = body.get('Record')
+    if isinstance(rec, list) and rec and isinstance(rec[0], dict):
+        return rec[0].get('Message')
+    return body.get('Message') or body.get('message') or body.get('error') or body.get('raw')
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -124,10 +135,15 @@ def post_invoice_to_sap(payload, reference_type, reference_id, reference_number,
         started_at = time.time()
         resp = requests.post(url, json=payload, headers=headers, timeout=120)
         duration_ms = int((time.time() - started_at) * 1000)
-        resp_body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {'raw': resp.text}
+        try:
+            resp_body = resp.json()
+        except ValueError:  # SAP sometimes answers a bare "-" or HTML
+            resp_body = {'raw': resp.text}
+        if not isinstance(resp_body, dict):
+            resp_body = {'raw': resp_body}
 
-        if resp.ok:
-            # SAP typically returns the document number in the response
+        # Only the staging ack means SAP took it; a 200 with "-" etc. is a failure.
+        if resp.ok and STAGED_ACK in resp.text.lower():
             sap_doc_no = resp_body.get('Document_Number') or resp_body.get('document_number')
             log_id = _write_log('SAP', reference_type, reference_id, reference_number,
                                 payload, resp_body, 'Success', None, created_by,
@@ -139,7 +155,7 @@ def post_invoice_to_sap(payload, reference_type, reference_id, reference_number,
                     'request_url': url, 'http_status': resp.status_code,
                     'response_body': resp_body, 'duration_ms': duration_ms}
         else:
-            error_msg = resp_body.get('message') or resp_body.get('error') or resp.text
+            error_msg = _sap_message(resp_body) or resp.text.strip() or '(empty response)'
             log_id = _write_log('SAP', reference_type, reference_id, reference_number,
                                 payload, resp_body, 'Error',
                                 f'HTTP {resp.status_code}: {error_msg}', created_by,
@@ -147,7 +163,7 @@ def post_invoice_to_sap(payload, reference_type, reference_id, reference_number,
                                 response_status_code=resp.status_code,
                                 duration_ms=duration_ms)
             return {'ok': False, 'sap_document_number': None,
-                    'message': f'SAP returned {resp.status_code}: {error_msg}', 'log_id': log_id,
+                    'message': f'SAP not staged (HTTP {resp.status_code}): {error_msg}', 'log_id': log_id,
                     'request_url': url, 'http_status': resp.status_code,
                     'response_body': resp_body, 'duration_ms': duration_ms}
 
