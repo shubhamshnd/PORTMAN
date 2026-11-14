@@ -5513,12 +5513,34 @@ def _load_dynamic_equipment_list(cur):
             existing.add(short_name.upper())
             equipments.append({'raw_name': raw_name, 'short_name': short_name})
 
+    CANONICAL_EQUIPMENT_ORDER = [
+        'BU 1',
+        'BU 2',
+        'Sen @ J-1',
+        'Sen @ J-5',
+        'BUL-1',
+        'BUL-2',
+        'BUL-3',
+        'BUL-4',
+        'BUL-5',
+        'Excavator 285'
+    ]
+
+    def _eq_order(eq):
+        s = eq['short_name']
+        try:
+            return (0, CANONICAL_EQUIPMENT_ORDER.index(s))
+        except ValueError:
+            return (1, s)
+
+    equipments.sort(key=_eq_order)
     return equipments
 
 
 def _load_dynamic_delay_columns(cur):
     """
-    Dynamically builds delay groups and equipment columns from the database.
+    Dynamically builds delay groups and equipment columns from the database,
+    ordered in exact canonical report sequence.
     """
     equipments = _load_dynamic_equipment_list(cur)
 
@@ -5540,12 +5562,16 @@ def _load_dynamic_delay_columns(cur):
         rmhs_cols.append(col_item)
         delay_columns.append(col_item)
 
-    # 2. Equipments idle for DTC (starts with BUs, then dynamic unloader/cranes)
+    # 2. Equipments idle for DTC
+    # Order: BUs, BU 1, BU 2, Sen @ J-1, Sen @ J-5, BUL-1, BUL-2, BUL-3, BUL-4, BUL-5
     dtc_cols = [('CF', 'Equipments idle for DTC', 'BUs')]
     delay_columns.append(dtc_cols[0])
     dtc_map = {}
-    dtc_std = {'BU 1': 'CG', 'BU 2': 'CH', 'Sen @ J-1': 'CI', 'Sen @ J-5': 'CJ',
-               'BUL-1': 'CK', 'BUL-2': 'CL', 'BUL-3': 'CM', 'BUL-4': 'CN', 'BUL-5': 'CO'}
+    dtc_std = {
+        'BU 1': 'CG', 'BU 2': 'CH',
+        'Sen @ J-1': 'CI', 'Sen @ J-5': 'CJ',
+        'BUL-1': 'CK', 'BUL-2': 'CL', 'BUL-3': 'CM', 'BUL-4': 'CN', 'BUL-5': 'CO'
+    }
     idx_extra = 1
     for eq in equipments:
         s_name = eq['short_name']
@@ -5559,17 +5585,29 @@ def _load_dynamic_delay_columns(cur):
         dtc_cols.append(col_item)
         delay_columns.append(col_item)
 
-    # 3. No Cargo (starts with BUs, BU 1, BU 2, Sen @ J-1, combos, then dynamic BULs)
+    # 3. No Cargo
+    # Order: BUs, BU 1, BU 2, Sen @ J-1, BU-1 + Sen J1, Sen @ J-5 / EX 650, BUL-1, BUL-2, BUL-3, BUL-4, BUL-5
     no_cargo_cols = [('CP', 'No Cargo', 'BUs')]
     delay_columns.append(no_cargo_cols[0])
-    no_cargo_std = {'BU 1': 'CQ', 'BU 2': 'CR', 'Sen @ J-1': 'CS',
-                    'BUL-1': 'CV', 'BUL-2': 'CW', 'BUL-3': 'CX', 'BUL-4': 'CY', 'BUL-5': 'CZ'}
-    no_cargo_map = {}
+    no_cargo_std = {
+        'BU 1': 'CQ', 'BU 2': 'CR',
+        'Sen @ J-1': 'CS',
+        'BUL-1': 'CV', 'BUL-2': 'CW', 'BUL-3': 'CX', 'BUL-4': 'CY', 'BUL-5': 'CZ'
+    }
+    no_cargo_map = {
+        'BUs': 'CP',
+        'BU 1': 'CQ',
+        'BU 2': 'CR',
+        'Sen @ J-1': 'CS',
+        'BU-1 + Sen J1': 'CT',
+        'Sen @ J-5 / EX 650': 'CU',
+        'Sen @ J-5': 'CU',
+        'Excavator 285': 'CU'
+    }
 
     for s_name in ['BU 1', 'BU 2', 'Sen @ J-1']:
         k = no_cargo_std.get(s_name)
         if k:
-            no_cargo_map[s_name] = k
             col_item = (k, 'No Cargo', s_name)
             no_cargo_cols.append(col_item)
             delay_columns.append(col_item)
@@ -5578,7 +5616,6 @@ def _load_dynamic_delay_columns(cur):
     col_cu = ('CU', 'No Cargo', 'Sen @ J-5 / EX 650')
     no_cargo_cols.extend([col_ct, col_cu])
     delay_columns.extend([col_ct, col_cu])
-    no_cargo_map['Sen @ J-5'] = 'CU'
 
     idx_nc_extra = 1
     for eq in equipments:
@@ -5594,12 +5631,19 @@ def _load_dynamic_delay_columns(cur):
         delay_columns.append(col_item)
 
     # 4. Non Availability of Equipments
+    # Order: BUs, BU 1, BU 2, Sen @ J-1, Sen @ J-5, BUL-1, BUL-2, BUL-3, BUL-4, BUL-5, Excavator 285, Jetty Conveyors
     non_avail_cols = [('DA', 'Non Availability of Equipments', 'BUs')]
     delay_columns.append(non_avail_cols[0])
-    non_avail_std = {'BU 1': 'DB', 'BU 2': 'DC', 'Sen @ J-1': 'DD', 'Sen @ J-5': 'DE',
-                     'BUL-1': 'DF', 'BUL-2': 'DG', 'BUL-3': 'DH', 'BUL-4': 'DI', 'BUL-5': 'DJ',
-                     'Excavator 285': 'DK'}
-    non_avail_map = {}
+    non_avail_std = {
+        'BU 1': 'DB', 'BU 2': 'DC',
+        'Sen @ J-1': 'DD', 'Sen @ J-5': 'DE',
+        'BUL-1': 'DF', 'BUL-2': 'DG', 'BUL-3': 'DH', 'BUL-4': 'DI', 'BUL-5': 'DJ',
+        'Excavator 285': 'DK'
+    }
+    non_avail_map = {
+        'BUs': 'DA',
+        'Jetty Conveyors': 'DL'
+    }
     idx_na_extra = 1
     for eq in equipments:
         s_name = eq['short_name']
@@ -5713,10 +5757,10 @@ def _classify_delay(delay_name, eq_norm, system_name, dispatch_maps=None):
     non_avail_map = dispatch_maps.get('non_avail_map', {})
     idle_map = dispatch_maps.get('idle_map', {})
 
-    if 'BAD WEATHER' in dn:
+    if 'BAD WEATHER' in dn or 'WEATHER' in dn or 'RAIN' in dn:
         return ('BAD_WX', None)
 
-    # RMHS System
+    # 1. RMHS System
     if 'C-131 A' in dn or 'C 131 A' in dn or 'C-131 A' in sn:
         return ('RMHS', 'BY')
     elif 'C-131 C' in dn or 'C-131 D' in dn or 'C 131 C' in dn or 'C 131 D' in dn or 'C-131 C' in sn or 'C-131 D' in sn:
@@ -5734,30 +5778,38 @@ def _classify_delay(delay_name, eq_norm, system_name, dispatch_maps=None):
     elif 'LS-5' in dn or 'LS 5' in dn or 'CEMENT' in dn:
         return ('RMHS', 'CE')
 
-    # Equipments idle for DTC
-    if 'DTC' in dn or 'IDLE DUE TO' in dn:
+    # 2. Equipments idle for DTC (Different types of Cargo)
+    if 'DIFFERENT TYPE' in dn or 'DIFFERENT CARGO' in dn or 'DTC' in dn or 'IDLE FOR DTC' in dn or 'IDLE DUE TO DTC' in dn:
         col_key = dtc_map.get(eq_norm, 'CF')
         return ('IDLE_DTC', col_key)
 
-    # No Cargo
-    if 'NO CARGO' in dn or 'NO DUMPER' in dn or 'HOPPER EMPTY' in dn:
+    # 3. No Cargo
+    if 'NO CARGO' in dn or 'WANT OF CARGO' in dn or 'WAITING FOR CARGO' in dn:
         col_key = no_cargo_map.get(eq_norm, 'CP')
         return ('NO_CARGO', col_key)
 
-    # Non Availability of Equipments
-    if any(x in dn for x in ['BREAKDOWN', 'SHUTDOWN', 'MAINTENANCE', 'POWER FAILURE', 'JAMMING', 'CLEANING']):
-        if 'CONVEYOR' in dn or 'BELT' in dn or 'CHUTE' in dn:
+    # 4. Non Availability of Equipments
+    is_non_avail = (
+        any(x in dn for x in ['BREAKDOWN', 'SHUTDOWN', 'MAINTENANCE', 'POWER FAILURE', 'JAMMING', 'FEEDER'])
+        or (dn == 'IDLE' and eq_norm == 'Excavator 285')
+        or (dn == 'NO OPERATOR' and eq_norm == 'Excavator 285')
+    )
+    if is_non_avail:
+        is_jetty_conveyor = (
+            any(sn.startswith(p) for p in ['DR', 'SC', 'C-103', 'DR-', 'SC-'])
+            or any(x in sn for x in ['CONVEYOR', 'BELT', 'CHUTE', 'FEEDER', 'ROUTE'])
+            or any(x in dn for x in ['CONVEYOR', 'BELT', 'CHUTE', 'FEEDER', 'TRACK CLEANING', 'JAMMING'])
+        )
+        if is_jetty_conveyor:
             return ('NON_AVAIL', 'DL')
         col_key = non_avail_map.get(eq_norm, 'DA')
         return ('NON_AVAIL', col_key)
 
-    # Idle Equipments
-    if 'IDLE' in dn:
+    # 5. Idle Equipments
+    if 'IDLE EQUIPMENT' in dn or 'IDLE EQUIPMENTS' in dn:
         if eq_norm in idle_map:
             return ('IDLE_EQ', idle_map[eq_norm])
-        else:
-            col_key = dtc_map.get(eq_norm, 'CF')
-            return ('IDLE_DTC', col_key)
+        return ('IDLE_EQ', 'DM')
 
     return ('OTHER', None)
 
@@ -5782,7 +5834,7 @@ def _get_jetty_discharge_data(cur, report_date):
         month_start_date = date(target_year, target_month, 1)
         _, last_day_num = calendar.monthrange(target_year, target_month)
         month_end_date = date(target_year, target_month, last_day_num)
-        data_cutoff_date = report_dt.date()
+        data_cutoff_date = report_dt.date() - timedelta(days=1)
 
     month_name = calendar.month_name[target_month]
     month_label = f"{month_name} :-{target_year}"
@@ -5806,7 +5858,7 @@ def _get_jetty_discharge_data(cur, report_date):
           AND is_deleted IS NOT TRUE
           AND cargo_name IS NOT NULL AND TRIM(cargo_name) != ''
         GROUP BY entry_date, TRIM(cargo_name)
-    """, [month_start_date.strftime('%Y-%m-%d'), month_end_date.strftime('%Y-%m-%d')])
+    """, [month_start_date.strftime('%Y-%m-%d'), data_cutoff_date.strftime('%Y-%m-%d')])
     cargo_rows = cur.fetchall()
 
     # Fetch Sennebogen & Excavator quantities (for DX)
@@ -5825,7 +5877,7 @@ def _get_jetty_discharge_data(cur, report_date):
               OR UPPER(equipment_name) LIKE '%%285%%'
           )
         GROUP BY entry_date
-    """, [month_start_date.strftime('%Y-%m-%d'), month_end_date.strftime('%Y-%m-%d')])
+    """, [month_start_date.strftime('%Y-%m-%d'), data_cutoff_date.strftime('%Y-%m-%d')])
     sen_rows = {str(r['entry_date'])[:10]: float(r.get('sen_qty') or 0) for r in cur.fetchall()}
 
     # Fetch delay rows
@@ -5842,7 +5894,7 @@ def _get_jetty_discharge_data(cur, report_date):
           AND is_deleted IS NOT TRUE
           AND delay_name IS NOT NULL AND TRIM(delay_name) != ''
           AND delay_name NOT IN ('Unloading', 'Dumper Loading')
-    """, [month_start_date.strftime('%Y-%m-%d'), month_end_date.strftime('%Y-%m-%d')])
+    """, [month_start_date.strftime('%Y-%m-%d'), data_cutoff_date.strftime('%Y-%m-%d')])
     delay_rows = cur.fetchall()
 
     daily_cargos = {}
