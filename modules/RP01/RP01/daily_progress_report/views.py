@@ -5373,7 +5373,54 @@ def _load_dynamic_cargo_columns(cur):
             existing_names.add(lc.upper())
             next_id += 1
 
-    all_cargos = list(db_rows) + extra_rows
+    all_cargos = [dict(r) for r in db_rows] + extra_rows
+
+    CANONICAL_CATEGORY_ORDER = [
+        'Ore Fines',
+        'CLO',
+        'Pellets',
+        'Pyrite',
+        'Coking Coal',
+        'Coke',
+        'Limestone',
+        'Dolomite',
+        'Pyroxinite',
+        'Bentonite_Quartzite',
+        'HBI',
+        'HMGP',
+        'Clinker',
+        'Olivine',
+        'TMT',
+        'Lumps',
+        'Harsco Slag',
+        'SLAG',
+        'MOP & A/Sulphate',
+    ]
+
+    def _normalize_category(cat):
+        c = str(cat or '').strip()
+        if not c or c.lower() == 'other':
+            return 'Other'
+        if c.upper() in ('OTHER COAL', 'PCI COAL'):
+            return 'Coking Coal'
+        for can in CANONICAL_CATEGORY_ORDER:
+            if c.upper() == can.upper():
+                return can
+        return c
+
+    for c in all_cargos:
+        c['cargo_category'] = _normalize_category(c.get('cargo_category') or c.get('cargo_type'))
+
+    def _cat_sort_key(c):
+        cat = c.get('cargo_category') or 'Other'
+        c_id = c.get('id') if c.get('id') is not None else 99999
+        try:
+            cat_idx = CANONICAL_CATEGORY_ORDER.index(cat)
+            return (0, cat_idx, c_id)
+        except ValueError:
+            return (1, cat.upper(), c_id)
+
+    all_cargos.sort(key=_cat_sort_key)
 
     cargo_columns = []
     alias_map = {}
