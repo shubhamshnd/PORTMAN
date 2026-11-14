@@ -33,7 +33,7 @@ bp = Blueprint(
 
 MODULE_INFO = {
     "code": "CARGO_STATS",
-    "name": "Cargo Stats",
+    "name": "Cargo Utilization",
     "description": "Daily consumption, production and stock (RMHS / PNP) tracking",
     "icon": "bar-chart-2",
 }
