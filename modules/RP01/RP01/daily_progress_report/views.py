@@ -6532,6 +6532,606 @@ def _build_jetty_discharge_report_sheet(wb, cur, report_date):
     return ws
 
 
+# ============================================================================
+# 4TH SHEET: JETTY DISCHARGE REPORT BY CARGO CATEGORY & EQUIPMENT
+# ============================================================================
+
+def _get_category_and_equipment_meta(cur, month_start_date=None, data_cutoff_date=None):
+    """
+    Dynamically loads cargo categories from vessel_cargo and equipment from equipment table,
+    providing dynamic equipment subheaders for ALL cargo categories.
+    """
+    # 1. Fetch cargo categories from vessel_cargo
+    cur.execute("""
+        SELECT DISTINCT 
+            COALESCE(TRIM(cargo_type), 'Other') as cargo_type,
+            COALESCE(TRIM(cargo_category), 'Other') as cargo_category,
+            TRIM(cargo_name) as cargo_name
+        FROM vessel_cargo
+        ORDER BY cargo_category, cargo_name
+    """)
+    vc_rows = cur.fetchall()
+
+    # 2. Fetch equipment dynamically from equipment table
+    cur.execute("""
+        SELECT id, TRIM(name) as name
+        FROM equipment
+        WHERE name IS NOT NULL AND TRIM(name) != ''
+        ORDER BY id
+    """)
+    eq_db_rows = cur.fetchall()
+
+    PREF_ORDER = [
+        ('BUs', lambda n: 'BARGE UNLOADER' in n.upper() or 'BU' in n.upper() or 'HLE' in n.upper()),
+        ('Sen @ J-1', lambda n: 'SENNEBOGEN J1' in n.upper() or 'SENNEBOGEN 01' in n.upper() or 'SEN @ J-1' in n.upper() or 'TRX-J-1' in n.upper() or 'J1' in n.upper()),
+        ('Sen @ J-5', lambda n: 'SENNEBOGEN J5' in n.upper() or 'SENNEBOGEN 05' in n.upper() or 'SEN @ J-5' in n.upper() or 'TRX-J-2' in n.upper() or 'J5' in n.upper()),
+        ('Excavator 650', lambda n: '285' in n.upper() or '650' in n.upper() or '385' in n.upper() or 'EXCAVATOR' in n.upper() or 'EXAVATOR' in n.upper()),
+        ('BUL-1', lambda n: 'BUL-01' in n.upper() or 'BUL 01' in n.upper() or n.upper() == 'BUL-1'),
+        ('BUL-2', lambda n: 'BUL-02' in n.upper() or 'BUL 02' in n.upper() or n.upper() == 'BUL-2'),
+        ('BUL-3', lambda n: 'BUL-03' in n.upper() or 'BUL 03' in n.upper() or n.upper() == 'BUL-3'),
+        ('BUL-4', lambda n: 'BUL-04' in n.upper() or 'BUL 04' in n.upper() or n.upper() == 'BUL-4'),
+        ('BUL-5', lambda n: 'BUL-05' in n.upper() or 'BUL 05' in n.upper() or n.upper() == 'BUL-5'),
+    ]
+
+    equip_col_list = []
+    seen_headers = set()
+    for sh, matcher in PREF_ORDER:
+        if any(matcher(r['name']) for r in eq_db_rows):
+            equip_col_list.append(sh)
+            seen_headers.add(sh)
+
+    for r in eq_db_rows:
+        raw_n = r['name']
+        matched = any(matcher(raw_n) for _, matcher in PREF_ORDER)
+        if not matched and raw_n not in seen_headers:
+            seen_headers.add(raw_n)
+            equip_col_list.append(raw_n)
+
+    # All cargo categories receive the equipment list fetched from equipment table + TOTAL
+    ALL_CAT_EQUIP = equip_col_list + ['TOTAL']
+
+    CANONICAL_CATEGORIES = [
+        {
+            'key': 'ORE_FINES',
+            'name': 'ORE FINES',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'Ore Fines' or 'FINES' in cn.upper()
+        },
+        {
+            'key': 'LUMPS',
+            'name': 'LUMPS',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat in ('CLO', 'Lumps') or 'LUMP' in cn.upper() or 'CLO' in cn.upper()
+        },
+        {
+            'key': 'COKING_COAL',
+            'name': 'COKING COAL',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat in ('Coking Coal', 'Other Coal') or 'COAL' in cn.upper()
+        },
+        {
+            'key': 'QUARTZITE',
+            'name': 'Quartzite/Noncoking',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat in ('Bentonite_Quartzite', 'Quartzite', 'Bentonite') or 'QUARTZITE' in cn.upper() or 'BENTONITE' in cn.upper()
+        },
+        {
+            'key': 'DOLOMITE',
+            'name': 'DOLOMITE',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'Dolomite' or 'DOLOMITE' in cn.upper()
+        },
+        {
+            'key': 'LIMESTONE',
+            'name': 'LIMESTONE',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'Limestone' or 'LIMESTONE' in cn.upper()
+        },
+        {
+            'key': 'OLIVINE',
+            'name': 'Olivine',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'Olivine' or 'OLIVINE' in cn.upper() or 'OLIFLUX' in cn.upper()
+        },
+        {
+            'key': 'HBI',
+            'name': 'HBI',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'HBI' or 'HBI' in cn.upper()
+        },
+        {
+            'key': 'PELLETS',
+            'name': 'Pellets',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: (cat == 'Pellets' and 'LOADING' not in cn.upper() and ct != 'Finish Goods') or (cn.upper() == 'PELLETS')
+        },
+        {
+            'key': 'PELLETS_LOADING',
+            'name': 'Pellets loading',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': True,
+            'match': lambda cn, cat, ct: 'PELLETS LOADING' in cn.upper() or (cat == 'Pellets' and 'LOADING' in cn.upper())
+        },
+        {
+            'key': 'MGP_LOADING',
+            'name': 'MGP (Pig Iron) loading',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': True,
+            'match': lambda cn, cat, ct: 'PIG IRON' in cn.upper() or 'MGP' in cn.upper() or cat == 'HMGP'
+        },
+        {
+            'key': 'SLAG_LOADING',
+            'name': 'Slag Loading',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': True,
+            'match': lambda cn, cat, ct: 'SLAG' in cn.upper() or cat in ('Harsco Slag', 'SLAG')
+        },
+        {
+            'key': 'CLINKER',
+            'name': 'Clinker',
+            'subheaders': ALL_CAT_EQUIP,
+            'is_loading': False,
+            'match': lambda cn, cat, ct: cat == 'Clinker' or 'CLINKER' in cn.upper()
+        },
+    ]
+
+    cargo_to_cat = {}
+    for r in vc_rows:
+        cn = r['cargo_name']
+        cat = r['cargo_category']
+        ct = r['cargo_type']
+        cn_clean = cn.strip().upper()
+
+        matched_cat_key = None
+        for ccat in CANONICAL_CATEGORIES:
+            if ccat['match'](cn, cat, ct):
+                matched_cat_key = ccat['key']
+                break
+        if matched_cat_key:
+            cargo_to_cat[cn_clean] = matched_cat_key
+
+    # Check unmapped categories with actual activity in the reporting window
+    active_extra_cargos = set()
+    if month_start_date and data_cutoff_date:
+        cur.execute("""
+            SELECT DISTINCT UPPER(TRIM(cargo_name)) as cargo_name
+            FROM lueu_lines
+            WHERE entry_date >= %s AND entry_date <= %s
+              AND is_deleted IS NOT TRUE
+              AND quantity > 0
+        """, [month_start_date.strftime('%Y-%m-%d'), data_cutoff_date.strftime('%Y-%m-%d')])
+        active_extra_cargos = {r['cargo_name'] for r in cur.fetchall()}
+
+    seen_cats = set()
+    extra_categories = []
+    for r in vc_rows:
+        cat = r['cargo_category']
+        cn = r['cargo_name']
+        cn_clean = cn.strip().upper()
+        if cn_clean not in cargo_to_cat and cat not in seen_cats:
+            if cn_clean in active_extra_cargos:
+                seen_cats.add(cat)
+                extra_key = f"EXTRA_{cat.upper().replace(' ', '_')}"
+                extra_categories.append({
+                    'key': extra_key,
+                    'name': cat.upper(),
+                    'subheaders': ALL_CAT_EQUIP,
+                    'is_loading': False,
+                    'match': lambda cn_x, cat_x, ct_x, target_cat=cat: cat_x == target_cat
+                })
+                cargo_to_cat[cn_clean] = extra_key
+
+    final_categories = CANONICAL_CATEGORIES + extra_categories
+
+    TOTAL_GROUP = {
+        'key': 'TOTAL_GROUP',
+        'name': 'TOTAL',
+        'subheaders': [sh if sh != 'Excavator 650' else 'Excavator 285' for sh in equip_col_list] + ['Total'],
+        'is_loading': False,
+        'is_grand_total': True
+    }
+
+    return final_categories, TOTAL_GROUP, cargo_to_cat
+
+
+def _build_jetty_discharge_by_cargo_category_sheet(wb, cur, report_date):
+    """
+    Build Sheet 4: Jetty Discharge Report by Cargo Category and Equipment
+    matching the exact reference layout, headers, subheaders, formulas, and styles.
+    """
+    report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+
+    if report_dt.day == 1:
+        prev_month_last_day = report_dt.replace(day=1) - timedelta(days=1)
+        target_year = prev_month_last_day.year
+        target_month = prev_month_last_day.month
+        month_start_date = date(target_year, target_month, 1)
+        _, last_day_num = calendar.monthrange(target_year, target_month)
+        month_end_date = date(target_year, target_month, last_day_num)
+        data_cutoff_date = month_end_date
+    else:
+        target_year = report_dt.year
+        target_month = report_dt.month
+        month_start_date = date(target_year, target_month, 1)
+        _, last_day_num = calendar.monthrange(target_year, target_month)
+        month_end_date = date(target_year, target_month, last_day_num)
+        data_cutoff_date = report_dt.date() - timedelta(days=1)
+
+    month_name = calendar.month_name[target_month]
+    month_title = f"Jetty Discharge For {month_name} {target_year}"
+
+    categories, total_group, cargo_to_cat = _get_category_and_equipment_meta(cur, month_start_date, data_cutoff_date)
+
+    # 1. Assign columns to each category & equipment
+    all_col_defs = []
+    col_idx = 2  # Start at B (idx=2)
+    cat_ranges = []
+    for cat in categories:
+        s_c = col_idx
+        for sh in cat['subheaders']:
+            col_letter = get_column_letter(col_idx)
+            is_sub_total = (sh.upper() == 'TOTAL')
+            all_col_defs.append({
+                'col_idx': col_idx,
+                'col_letter': col_letter,
+                'category_key': cat['key'],
+                'category_name': cat['name'],
+                'equipment_header': sh,
+                'is_sub_total': is_sub_total,
+                'is_loading': cat['is_loading'],
+                'is_grand_total': False
+            })
+            col_idx += 1
+        e_c = col_idx - 1
+        cat_ranges.append({
+            'category_key': cat['key'],
+            'name': cat['name'],
+            'start_col': s_c,
+            'end_col': e_c,
+            'total_col': e_c
+        })
+
+    # Total group columns
+    s_c_tot = col_idx
+    for sh in total_group['subheaders']:
+        col_letter = get_column_letter(col_idx)
+        is_final_total = (sh.lower() == 'total')
+        all_col_defs.append({
+            'col_idx': col_idx,
+            'col_letter': col_letter,
+            'category_key': total_group['key'],
+            'category_name': total_group['name'],
+            'equipment_header': sh,
+            'is_sub_total': False,
+            'is_loading': False,
+            'is_grand_total': True,
+            'is_final_total': is_final_total
+        })
+        col_idx += 1
+    e_c_tot = col_idx - 1
+    total_group_range = {
+        'category_key': total_group['key'],
+        'name': total_group['name'],
+        'start_col': s_c_tot,
+        'end_col': e_c_tot
+    }
+    total_sheet_cols = e_c_tot
+
+    def map_equipment_col(eq_name, cat_subheaders):
+        eq = str(eq_name or '').strip().upper()
+        if 'BUL-01' in eq or 'BUL 01' in eq or eq == 'BUL-1':
+            return 'BUL-1' if 'BUL-1' in cat_subheaders else None
+        if 'BUL-02' in eq or 'BUL 02' in eq or eq == 'BUL-2':
+            return 'BUL-2' if 'BUL-2' in cat_subheaders else None
+        if 'BUL-03' in eq or 'BUL 03' in eq or eq == 'BUL-3':
+            return 'BUL-3' if 'BUL-3' in cat_subheaders else None
+        if 'BUL-04' in eq or 'BUL 04' in eq or eq == 'BUL-4':
+            return 'BUL-4' if 'BUL-4' in cat_subheaders else None
+        if 'BUL-05' in eq or 'BUL 05' in eq or eq == 'BUL-5':
+            return 'BUL-5' if 'BUL-5' in cat_subheaders else None
+        
+        if '285' in eq or '650' in eq or '385' in eq or 'EXCAVATOR' in eq or 'EXAVATOR' in eq:
+            if 'Excavator 650' in cat_subheaders:
+                return 'Excavator 650'
+            if 'Excavator 285' in cat_subheaders:
+                return 'Excavator 285'
+            for sh in cat_subheaders:
+                if 'EXCAVATOR' in sh.upper():
+                    return sh
+
+        if 'SENNEBOGEN J1' in eq or 'SENNEBOGEN 01' in eq or 'SEN @ J-1' in eq or 'TRX-J-1' in eq or 'TRX-D-1' in eq or 'J1' in eq or 'J-1' in eq:
+            if 'Sen @ J-1' in cat_subheaders:
+                return 'Sen @ J-1'
+        if 'SENNEBOGEN J5' in eq or 'SENNEBOGEN 05' in eq or 'SEN @ J-5' in eq or 'TRX-J-2' in eq or 'TRX-D-2' in eq or 'J5' in eq or 'J-2' in eq or 'J2' in eq:
+            if 'Sen @ J-5' in cat_subheaders:
+                return 'Sen @ J-5'
+
+        if 'BARGE UNLOADER' in eq or 'BU' in eq or 'HLE' in eq:
+            if 'BUs' in cat_subheaders: return 'BUs'
+            if 'BUL-1' in cat_subheaders and '1' in eq: return 'BUL-1'
+            if 'BUL-2' in cat_subheaders and '2' in eq: return 'BUL-2'
+
+        for sh in cat_subheaders:
+            if sh.upper() in eq or eq in sh.upper():
+                return sh
+
+        if 'BUs' in cat_subheaders:
+            return 'BUs'
+        return None
+
+    def map_to_total_group_col(sh):
+        if sh in ('Sen @ J-1', 'Trx-D-1', 'Trx-J-1'): return 'Sen @ J-1'
+        if sh in ('Sen @ J-5', 'Trx-D-2', 'Trx-J-2'): return 'Sen @ J-5'
+        if sh in ('Excavator 650', 'Excavator 285', 'Excavator or 385', 'Excavator (for GSD)'):
+            for tg in tot_group_cols:
+                if 'EXCAVATOR' in tg['equipment_header'].upper():
+                    return tg['equipment_header']
+            return 'Excavator 285'
+        if sh in ('BUL-1', 'BUL-2', 'BUL-3', 'BUL-4', 'BUL-5', 'BUs', 'HLE'):
+            return 'BUs' if sh == 'HLE' else sh
+        return sh
+
+    # 2. Query lueu_lines for this month
+    cur.execute("""
+        SELECT 
+            entry_date,
+            TRIM(cargo_name) as cargo_name,
+            TRIM(equipment_name) as equipment_name,
+            SUM(COALESCE(quantity, 0)) as qty
+        FROM lueu_lines
+        WHERE entry_date >= %s AND entry_date <= %s
+          AND is_deleted IS NOT TRUE
+          AND quantity > 0
+        GROUP BY entry_date, TRIM(cargo_name), TRIM(equipment_name)
+    """, [month_start_date.strftime('%Y-%m-%d'), data_cutoff_date.strftime('%Y-%m-%d')])
+    raw_lines = cur.fetchall()
+
+    matrix = {}
+    for r in raw_lines:
+        d_str = str(r['entry_date'])[:10]
+        cname = r['cargo_name']
+        eq = r['equipment_name']
+        qty = float(r['qty'] or 0)
+        cname_clean = (cname or '').strip().upper()
+
+        cat_key = cargo_to_cat.get(cname_clean)
+        if not cat_key:
+            for ccat in categories:
+                if ccat['match'](cname, '', ''):
+                    cat_key = ccat['key']
+                    break
+        if not cat_key:
+            cat_key = 'ORE_FINES'
+
+        cat_meta = next((c for c in categories if c['key'] == cat_key), None)
+        if not cat_meta:
+            continue
+
+        sh_col = map_equipment_col(eq, cat_meta['subheaders'])
+        if not sh_col:
+            sh_col = 'HLE' if 'HLE' in cat_meta['subheaders'] else cat_meta['subheaders'][0]
+
+        matrix.setdefault(d_str, {}).setdefault(cat_key, {})
+        matrix[d_str][cat_key][sh_col] = matrix[d_str][cat_key].get(sh_col, 0.0) + qty
+
+    # 3. Create Sheet 4
+    ws = wb.create_sheet(title="Jetty Disch by Cargo")
+    ws.views.sheetView[0].showGridLines = True
+
+    # Styles
+    font_title = Font(name='Calibri', size=14, bold=True)
+    font_cat_header = Font(name='Calibri', size=10, bold=True)
+    font_sub_header = Font(name='Calibri', size=9, bold=True)
+    font_total_header = Font(name='Calibri', size=10, bold=True)
+    font_regular = Font(name='Calibri', size=9, bold=False)
+    font_cat_total = Font(name='Calibri', size=9, bold=True, color='006100')
+    font_bottom_total = Font(name='Calibri', size=9, bold=True)
+
+    cyan_fill = PatternFill('solid', fgColor='D0F0F8')
+    total_fill = PatternFill('solid', fgColor='E9EEF5')
+    thin_border = Border(
+        left=Side(style='thin', color='B0B0B0'),
+        right=Side(style='thin', color='B0B0B0'),
+        top=Side(style='thin', color='B0B0B0'),
+        bottom=Side(style='thin', color='B0B0B0')
+    )
+
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_right = Alignment(horizontal='right', vertical='center')
+
+    # Row 1: Title
+    ws.row_dimensions[1].height = 25
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_sheet_cols)
+    cell_title = ws.cell(1, 1, month_title)
+    cell_title.font = font_title
+    cell_title.alignment = align_center
+
+    # Row 2 & 3: Column A (Date)
+    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[3].height = 20
+    ws.merge_cells('A2:A3')
+    cell_date = ws['A2']
+    cell_date.value = "Date"
+    cell_date.font = font_cat_header
+    cell_date.alignment = align_center
+    cell_date.fill = cyan_fill
+    ws['A2'].border = thin_border
+    ws['A3'].border = thin_border
+    ws['A3'].fill = cyan_fill
+
+    # Category Headers in Row 2, Subheaders in Row 3
+    for cat_r in cat_ranges:
+        s_c = cat_r['start_col']
+        e_c = cat_r['end_col']
+        if s_c < e_c:
+            ws.merge_cells(start_row=2, start_column=s_c, end_row=2, end_column=e_c)
+        c2 = ws.cell(2, s_c, cat_r['name'])
+        c2.font = font_cat_header
+        c2.alignment = align_center
+        c2.fill = cyan_fill
+        for ci in range(s_c, e_c + 1):
+            ws.cell(2, ci).fill = cyan_fill
+            ws.cell(2, ci).border = thin_border
+
+    # TOTAL Group Header in Row 2
+    s_c_tot = total_group_range['start_col']
+    e_c_tot = total_group_range['end_col']
+    ws.merge_cells(start_row=2, start_column=s_c_tot, end_row=2, end_column=e_c_tot)
+    c2_tot = ws.cell(2, s_c_tot, total_group_range['name'])
+    c2_tot.font = font_total_header
+    c2_tot.alignment = align_center
+    c2_tot.fill = cyan_fill
+    for ci in range(s_c_tot, e_c_tot + 1):
+        ws.cell(2, ci).fill = cyan_fill
+        ws.cell(2, ci).border = thin_border
+
+    # Subheaders in Row 3
+    for col_info in all_col_defs:
+        ci = col_info['col_idx']
+        sh = col_info['equipment_header']
+        c3 = ws.cell(3, ci, sh)
+        c3.font = font_total_header if col_info['is_sub_total'] or col_info.get('is_final_total') else font_sub_header
+        c3.alignment = align_center
+        c3.fill = cyan_fill
+        c3.border = thin_border
+
+    # Data Rows (Row 4 to 4 + last_day_num - 1)
+    start_row = 4
+    tot_group_cols = [c for c in all_col_defs if c['is_grand_total'] and not c.get('is_final_total')]
+    final_tot_col = next(c for c in all_col_defs if c.get('is_final_total'))
+
+    for day_num in range(1, last_day_num + 1):
+        r = start_row + day_num - 1
+        ws.row_dimensions[r].height = 18
+        current_dt = date(target_year, target_month, day_num)
+        d_str = current_dt.strftime('%Y-%m-%d')
+        d_label = current_dt.strftime('%d-%b-%y')
+        is_active = (current_dt <= data_cutoff_date)
+
+        c_d = ws.cell(r, 1, d_label)
+        c_d.font = font_regular
+        c_d.alignment = align_center
+        c_d.border = thin_border
+
+        if not is_active:
+            for col_info in all_col_defs:
+                ci = col_info['col_idx']
+                cell = ws.cell(r, ci, '-')
+                cell.font = font_regular
+                cell.alignment = align_center
+                cell.border = thin_border
+            continue
+
+        day_data = matrix.get(d_str, {})
+        equip_daily_sums = {}
+
+        for cat_r in cat_ranges:
+            cat_k = cat_r['category_key']
+            cat_day_vals = day_data.get(cat_k, {})
+            s_c = cat_r['start_col']
+            e_c = cat_r['end_col']
+
+            for ci in range(s_c, e_c):
+                col_info = next(c for c in all_col_defs if c['col_idx'] == ci)
+                sh = col_info['equipment_header']
+                val = cat_day_vals.get(sh, 0.0)
+                cell = ws.cell(r, ci)
+                cell.border = thin_border
+                cell.font = font_regular
+                cell.alignment = align_right
+                if val > 0:
+                    cell.value = round(val, 2)
+                    cell.number_format = '#,##0'
+                else:
+                    cell.value = '-'
+                    cell.alignment = align_center
+
+                tot_sh = map_to_total_group_col(sh)
+                if tot_sh and val > 0:
+                    equip_daily_sums[tot_sh] = equip_daily_sums.get(tot_sh, 0.0) + val
+
+            # Category TOTAL column
+            first_equip_let = get_column_letter(s_c)
+            last_equip_let = get_column_letter(e_c - 1)
+            cell_tot = ws.cell(r, e_c)
+            cell_tot.border = thin_border
+            cell_tot.font = font_cat_total
+            cell_tot.alignment = align_right
+            cell_tot.value = f"=SUM({first_equip_let}{r}:{last_equip_let}{r})"
+            cell_tot.number_format = '#,##0; -#,##0; "-"'
+
+        # TOTAL Group Equipment columns
+        for tg_col in tot_group_cols:
+            ci = tg_col['col_idx']
+            sh = tg_col['equipment_header']
+            val = equip_daily_sums.get(sh, 0.0)
+            cell = ws.cell(r, ci)
+            cell.border = thin_border
+            cell.font = font_bottom_total
+            cell.alignment = align_right
+            if val > 0:
+                cell.value = round(val, 2)
+                cell.number_format = '#,##0'
+            else:
+                cell.value = '-'
+                cell.alignment = align_center
+
+        # Final Total column
+        first_tg_let = tot_group_cols[0]['col_letter']
+        last_tg_let = tot_group_cols[-1]['col_letter']
+        cell_final = ws.cell(r, final_tot_col['col_idx'])
+        cell_final.border = thin_border
+        cell_final.font = font_bottom_total
+        cell_final.alignment = align_right
+        cell_final.value = f"=SUM({first_tg_let}{r}:{last_tg_let}{r})"
+        cell_final.number_format = '#,##0.00; -#,##0.00; "-"'
+
+    # Bottom Row: TOTAL
+    bot_row = start_row + last_day_num
+    ws.row_dimensions[bot_row].height = 20
+    cell_bot_label = ws.cell(bot_row, 1, "TOTAL")
+    cell_bot_label.font = font_cat_header
+    cell_bot_label.alignment = align_center
+    cell_bot_label.border = thin_border
+    cell_bot_label.fill = total_fill
+
+    for col_info in all_col_defs:
+        ci = col_info['col_idx']
+        c_let = col_info['col_letter']
+        c_bot = ws.cell(bot_row, ci)
+        c_bot.border = thin_border
+        c_bot.font = font_bottom_total
+        c_bot.alignment = align_right
+        c_bot.fill = total_fill
+        c_bot.value = f"=SUM({c_let}{start_row}:{c_let}{bot_row - 1})"
+        if col_info.get('is_final_total'):
+            c_bot.number_format = '#,##0.00'
+        else:
+            c_bot.number_format = '#,##0'
+
+    # Column dimensions
+    ws.column_dimensions['A'].width = 12
+    for col_info in all_col_defs:
+        c_let = col_info['col_letter']
+        if col_info.get('is_final_total'):
+            ws.column_dimensions[c_let].width = 15
+        elif col_info['is_sub_total']:
+            ws.column_dimensions[c_let].width = 13
+        else:
+            ws.column_dimensions[c_let].width = 11
+
+    return ws
+
+
 @bp.route(
     '/api/module/RP01/daily_progress_report_excel',
     methods=['GET', 'POST']
@@ -8533,6 +9133,12 @@ def daily_progress_report_excel():
         # =====================================================
 
         _build_jetty_discharge_report_sheet(wb, cur, report_date)
+
+        # =====================================================
+        # SHEET 4: JETTY DISCHARGE REPORT BY CARGO CATEGORY & EQUIPMENT
+        # =====================================================
+
+        _build_jetty_discharge_by_cargo_category_sheet(wb, cur, report_date)
 
         # =====================================================
         # GENERATE FILE
