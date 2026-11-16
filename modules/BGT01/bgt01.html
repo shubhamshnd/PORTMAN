@@ -1,0 +1,1068 @@
+{% extends "base.html" %}
+
+{% block title %}Barge Timings - PORTMAN{% endblock %}
+
+{% block head %}
+<style>
+    .save-status {
+        font-size: 13px;
+        font-weight: 600;
+        color: #38a169;
+        margin-left: 8px;
+    }
+
+    /* Modal Overlay & Content (Exact MBCT01) */
+    .detail-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        overflow: auto;
+    }
+    .detail-modal.active {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 20px;
+    }
+    .detail-modal-content {
+        background: white;
+        border-radius: 8px;
+        width: 95%;
+        max-width: 1400px;
+        margin: 20px auto;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        position: relative;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+    .dark-theme .detail-modal-content {
+        background: #1e293b;
+        color: #e2e8f0;
+    }
+    .detail-modal-header {
+        padding: 20px;
+        border-bottom: 2px solid #3182ce;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 10;
+    }
+    .dark-theme .detail-modal-header {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    .detail-modal-header h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    .detail-modal-close {
+        background: #e53e3e;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    .detail-modal-close:hover {
+        background: #c53030;
+    }
+    .detail-modal-body {
+        padding: 20px;
+    }
+    .sub-table-container {
+        background: #f8fafc;
+        padding: 15px;
+        border-bottom: 2px solid #3182ce;
+        box-sizing: border-box;
+        width: 100% !important;
+        overflow: hidden;
+        display: block;
+        margin: 0;
+    }
+    .dark-theme .sub-table-container {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    .sub-section {
+        margin-bottom: 15px;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .sub-section:last-child {
+        margin-bottom: 0;
+    }
+    .dark-theme .sub-section {
+        border-color: #475569;
+    }
+    .sub-section-header {
+        background: #e2e8f0;
+        padding: 10px 15px;
+        font-weight: 600;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #1a202c;
+    }
+    .dark-theme .sub-section-header {
+        background: #334155;
+        color: #e2e8f0;
+    }
+    .sub-section-content {
+        background: white;
+        overflow-x: auto;
+    }
+    .dark-theme .sub-section-content {
+        background: #1e293b;
+    }
+    .sub-tabulator {
+        font-size: 11px;
+        width: 100% !important;
+    }
+    .btn-sub-add {
+        background: #48bb78;
+        color: white;
+        border: none;
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+    }
+    .btn-sub-add:hover {
+        background: #38a169;
+    }
+    .btn-sub-save {
+        background: #3182ce;
+        color: white;
+        border: none;
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    .btn-sub-save:hover {
+        background: #2c5282;
+    }
+    .sub-section-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    /* Blue Details '+' button on main grid */
+    .btn-open-details {
+        background: #3182ce;
+        color: white;
+        border: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    .btn-open-details:hover {
+        background: #2c5282;
+    }
+
+    /* Tug Activity Header & Cell Styling (Clean, simple, light colors) */
+    .tug-tabulator.tabulator {
+        border: 1px solid #cbd5e0;
+    }
+    .tug-tabulator .tabulator-header {
+        background: #f1f5f9 !important;
+        border-bottom: 1px solid #cbd5e0 !important;
+    }
+    .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col {
+        background: #f8fafc !important;
+        border-right: 1px solid #e2e8f0 !important;
+        border-bottom: 1px solid #cbd5e0 !important;
+    }
+    .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+        padding: 6px 8px !important;
+    }
+    .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col .tabulator-col-title {
+        color: #334155 !important;
+        font-weight: 600 !important;
+        font-size: 11.5px !important;
+        text-align: center !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col-group {
+        background: #e2e8f0 !important;
+        border-right: 1px solid #cbd5e0 !important;
+        border-bottom: 1px solid #cbd5e0 !important;
+    }
+    .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col-group .tabulator-col-title {
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        color: #1e293b !important;
+        text-align: center !important;
+        padding: 6px 8px !important;
+    }
+    .tug-tabulator .tabulator-cell {
+        border-right: 1px solid #f1f5f9 !important;
+        border-bottom: 1px solid #e2e8f0 !important;
+        font-size: 11.5px !important;
+        padding: 6px 8px !important;
+        color: #1e293b;
+    }
+    .dark-theme .tug-tabulator .tabulator-header {
+        background: #1e293b !important;
+        border-color: #334155 !important;
+    }
+    .dark-theme .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col {
+        background: #243044 !important;
+        border-color: #334155 !important;
+    }
+    .dark-theme .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col .tabulator-col-title {
+        color: #cbd5e1 !important;
+    }
+    .dark-theme .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col-group {
+        background: #334155 !important;
+        border-color: #475569 !important;
+    }
+    .dark-theme .sub-tabulator.tug-tabulator .tabulator-header .tabulator-col-group .tabulator-col-title {
+        color: #f1f5f9 !important;
+    }
+    .dark-theme .tug-tabulator .tabulator-cell {
+        border-color: #334155 !important;
+        color: #e2e8f0 !important;
+    }
+
+    .tabulator-edit-list {
+        z-index: 100000 !important;
+        max-height: 260px !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2) !important;
+        border-radius: 4px !important;
+    }
+
+    /* Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .status-draft { background: #fefcbf; color: #744210; }
+    .status-approved { background: #c6f6d5; color: #22543d; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="module-header">
+    <h2>Barge Timings</h2>
+    <span class="module-code">BGT01</span>
+    <span id="saveStatus" class="save-status"></span>
+</div>
+
+<div class="toolbar">
+    {% if permissions.can_add %}<button class="btn btn-add" onclick="addRow()">+ Add Row</button>{% endif %}
+    {% if permissions.can_delete %}<button class="btn btn-delete" onclick="deleteSelected()">Delete Selected</button>{% endif %}
+    {% if permissions.can_add or permissions.can_edit %}<button class="btn btn-save" onclick="saveAll()">Save (Ctrl+S)</button>{% endif %}
+    {% if permissions.can_edit or permissions.can_add %}<button id="editModeBtn" class="btn" style="font-size:12px;padding:4px 12px;background:#805ad5;color:white;border:none;" onclick="toggleEditMode()">✏️ Edit</button>{% endif %}
+    <div class="row-info" style="margin-left:auto;">Rows: <span id="rowCount">0</span> / <span id="totalCount">0</span></div>
+</div>
+
+<div id="unsavedBanner" style="display:none;background:#feebc8;border-left:4px solid #dd6b20;color:#7b341e;padding:8px 14px;font-size:12px;margin-bottom:8px;">
+    ⚠ You have unsaved header changes &mdash; <button class="btn btn-save" onclick="saveAll()" style="margin:0;padding:2px 8px;font-size:11px;">Save Now</button>
+</div>
+
+<!-- Main Grid Container -->
+<div id="table"></div>
+
+<!-- Details Modal: Exact MBCT01 modal structure -->
+<div id="detailsModal" class="detail-modal">
+    <div class="detail-modal-content">
+        <div class="detail-modal-header">
+            <div>
+                <h3 id="modalTitle">Details</h3>
+                <div id="modalSubTitle" style="font-size:12px;color:#718096;margin-top:2px;"></div>
+            </div>
+            <button class="detail-modal-close" onclick="closeDetailsModal()">Close</button>
+        </div>
+        <div class="detail-modal-body">
+            <div class="sub-table-container">
+                <div class="sub-section">
+                    <div class="sub-section-header">
+                        <span>Tug Movement for Barge</span>
+                        <div class="sub-section-actions">
+                            {% if permissions.can_add %}<button class="btn-sub-add" onclick="addActivityRow()">+ Add</button>{% endif %}
+                            {% if permissions.can_add or permissions.can_edit %}<button class="btn-sub-save" onclick="saveActivities()">Save</button>{% endif %}
+                        </div>
+                    </div>
+                    <div class="sub-section-content">
+                        <div id="activityTable" class="sub-tabulator tug-tabulator"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    addToRecent('BGT01', 'Barge Timings');
+
+    let table = null;
+    let activityTable = null;
+    let editMode = false;
+    let headerDirty = false;
+    let dirtyRowIds = new Set();
+    let currentHeaderId = null;
+    let currentHeaderData = null;
+
+    let availableVcns = [];
+    let vcnsMap = {};
+    let masters = { tugs: [], officers: [], berths: [], activities: [] };
+    let bargeCache = {}; // vcn_id -> { vcn_barges: [], master_barges: [] }
+
+    const permissions = {{ permissions | tojson }};
+    const canEdit = permissions.can_edit || permissions.can_add;
+
+    document.addEventListener('DOMContentLoaded', async function() {
+        await loadMasters();
+        await loadAvailableVcns();
+        initTable();
+    });
+
+    async function loadMasters() {
+        try {
+            const res = await fetch('/api/module/BGT01/masters');
+            if (res.ok) masters = await res.json();
+        } catch(e) {
+            console.error('Error loading masters:', e);
+        }
+    }
+
+    async function loadAvailableVcns() {
+        try {
+            const res = await fetch('/api/module/BGT01/available_vcns');
+            if (res.ok) {
+                availableVcns = await res.json();
+                vcnsMap = {};
+                availableVcns.forEach(v => {
+                    vcnsMap[v.id] = v;
+                    vcnsMap[v.vcn_doc_num] = v;
+                });
+            }
+        } catch(e) {
+            console.error('Error loading VCNs:', e);
+        }
+    }
+
+    async function getBargesForVcn(vcnId) {
+        if (!vcnId) return { vcn_barges: [], master_barges: [] };
+        if (bargeCache[vcnId]) return bargeCache[vcnId];
+        try {
+            const res = await fetch(`/api/module/BGT01/barges_for_vcn/${vcnId}`);
+            if (res.ok) {
+                const data = await res.json();
+                bargeCache[vcnId] = data;
+                return data;
+            }
+        } catch(e) {
+            console.error('Error fetching barges for VCN:', e);
+        }
+        return { vcn_barges: [], master_barges: [] };
+    }
+
+    function toggleEditMode() {
+        editMode = !editMode;
+        const btn = document.getElementById('editModeBtn');
+        if (btn) {
+            btn.style.background = editMode ? '#38a169' : '#805ad5';
+            btn.textContent = editMode ? '✓ Editing' : '✏️ Edit';
+        }
+        if (table) table.redraw(true);
+    }
+
+    function markDirty(row) {
+        headerDirty = true;
+        document.getElementById('unsavedBanner').style.display = 'block';
+        if (row && row.getData().id) {
+            dirtyRowIds.add(String(row.getData().id));
+        }
+    }
+
+    function initTable() {
+        const vcnOptions = availableVcns.map(v => ({
+            label: `${v.vcn_doc_num} (${v.vessel_name || ''})`,
+            value: v.vcn_doc_num,
+            id: v.id,
+            vessel_name: v.vessel_name,
+            doc_date: v.doc_date,
+            cargo_name: v.cargo_name
+        }));
+
+        table = new Tabulator("#table", {
+            height: "calc(100vh - 160px)",
+            layout: "fitDataFill",
+            pagination: true,
+            paginationMode: "remote",
+            paginationSize: 20,
+            paginationSizeSelector: [20, 50, 75, 100, true],
+            ajaxURL: "/api/module/BGT01/data",
+            ajaxResponse: function(url, params, response) {
+                const data = response.data || [];
+                const total = response.total !== undefined ? response.total : data.length;
+                document.getElementById('rowCount').textContent = data.length;
+                document.getElementById('totalCount').textContent = total;
+                if (!response.last_page) {
+                    const size = (table && table.getPageSize && table.getPageSize()) ? table.getPageSize() : 20;
+                    response.last_page = Math.max(1, Math.ceil(total / (typeof size === 'number' ? size : total || 1)));
+                }
+                data.forEach(r => {
+                    if (r.vcn_id && !bargeCache[r.vcn_id]) {
+                        getBargesForVcn(r.vcn_id);
+                    }
+                });
+                return response;
+            },
+            selectable: true,
+            rowFormatter: function(row) {
+                const data = row.getData();
+                const status = data.doc_status || 'Draft';
+                const el = row.getElement();
+                if (status === 'Draft' && data.id) {
+                    el.style.backgroundColor = '#fffff0';
+                } else if (editMode && data.id && row.isSelected()) {
+                    el.style.backgroundColor = '#ebf8ff';
+                } else if (status === 'Approved') {
+                    el.style.backgroundColor = '#f0fff4';
+                }
+            },
+            columns: [
+                {formatter: "rowSelection", titleFormatter: "rowSelection", hozAlign: "center", headerSort: false, width: 40},
+                {
+                    title: "Details",
+                    field: "_details_btn",
+                    width: 70,
+                    hozAlign: "center",
+                    headerSort: false,
+                    formatter: function(cell) {
+                        const data = cell.getRow().getData();
+                        if (!data.id) return '';
+                        return '<button class="btn-open-details" title="Open Tug Movement Details">+</button>';
+                    },
+                    cellClick: function(e, cell) {
+                        const data = cell.getRow().getData();
+                        if (!data.id) {
+                            alert('Please click "Save (Ctrl+S)" first to save this row before opening details.');
+                            return;
+                        }
+                        openDetailsModal(data);
+                    }
+                },
+                {
+                    title: "VCN Doc Num",
+                    field: "vcn_doc_num",
+                    width: 200,
+                    editor: canEdit ? "list" : false,
+                    editorParams: {
+                        values: vcnOptions,
+                        autocomplete: true,
+                        listOnEmpty: true,
+                        clearable: true,
+                        itemFormatter: function(label) {
+                            return `<span style="font-weight:600;">${label}</span>`;
+                        }
+                    },
+                    cellEdited: async function(cell) {
+                        const row = cell.getRow();
+                        const val = cell.getValue();
+                        const vcnObj = vcnsMap[val] || availableVcns.find(v => v.vcn_doc_num === val || v.id === val);
+                        if (vcnObj) {
+                            row.update({
+                                vcn_id: vcnObj.id,
+                                vcn_doc_num: vcnObj.vcn_doc_num,
+                                vessel_name: vcnObj.vessel_name,
+                                doc_date: vcnObj.doc_date,
+                                cargo_name: vcnObj.cargo_name,
+                                barge_name: '', // reset barge selection
+                                trip_number: ''
+                            });
+                            // Pre-fetch barges for this specific vessel into cache
+                            await getBargesForVcn(vcnObj.id);
+                            markDirty(row);
+                        }
+                    }
+                },
+                {title: "Vessel Name", field: "vessel_name", width: 180, editor: false},
+                {
+                    title: "Barge Name",
+                    field: "barge_name",
+                    width: 200,
+                    editor: canEdit ? "list" : false,
+                    formatter: function(cell) {
+                        const rowData = cell.getRow().getData();
+                        const bName = (rowData.barge_name || cell.getValue() || '').trim();
+                        const trip = (rowData.trip_number || '').toString().trim();
+                        const cleanName = bName.split('/')[0].replace(/\s*\[Trip\s*[^\]]+\]/, '').trim();
+                        if (trip) {
+                            return `${cleanName} / ${trip}`;
+                        }
+                        return cleanName || bName;
+                    },
+                    editorParams: function(cell) {
+                        const rowData = cell.getRow().getData();
+                        const vcnId = rowData.vcn_id;
+                        if (vcnId && bargeCache[vcnId]) {
+                            const bData = bargeCache[vcnId];
+                            // ONLY show the barges nominated for this selected vessel
+                            if (bData.vcn_barges && bData.vcn_barges.length > 0) {
+                                return {
+                                    values: bData.vcn_barges.map(b => {
+                                        const val = b.trip_number ? `${b.barge_name} / ${b.trip_number}` : b.barge_name;
+                                        return { label: val, value: val };
+                                    }),
+                                    autocomplete: true,
+                                    listOnEmpty: true,
+                                    clearable: true
+                                };
+                            }
+                            // Fallback to master barges only if none nominated in operations
+                            if (bData.master_barges && bData.master_barges.length > 0) {
+                                return {
+                                    values: bData.master_barges.map(m => ({ label: m, value: m })),
+                                    autocomplete: true,
+                                    listOnEmpty: true,
+                                    clearable: true
+                                };
+                            }
+                        }
+                        let opts = [];
+                        if (masters && masters.barges) {
+                            opts = masters.barges.map(m => ({ label: m, value: m }));
+                        }
+                        return { values: opts, autocomplete: true, listOnEmpty: true, clearable: true };
+                    },
+                    cellEdited: function(cell) {
+                        let val = (cell.getValue() || '').trim();
+                        const row = cell.getRow();
+                        let barge = val;
+                        let trip = '';
+                        if (val.includes('/')) {
+                            const parts = val.split('/');
+                            barge = parts[0].trim();
+                            trip = parts[1].trim();
+                        } else {
+                            const m = val.match(/^(.*?)\s*\[Trip\s*([^\]]+)\]$/);
+                            if (m) {
+                                barge = m[1].trim();
+                                trip = m[2].trim();
+                            }
+                        }
+                        row.update({ barge_name: barge, trip_number: trip });
+                        markDirty(row);
+                    }
+                },
+                {
+                    title: "Trip No",
+                    field: "trip_number",
+                    visible: false
+                },
+                {title: "Doc Date", field: "doc_date", width: 120, editor: canEdit ? "input" : false, cellEdited: function(cell) { markDirty(cell.getRow()); }},
+                {title: "Cargo Name", field: "cargo_name", width: 170, editor: false},
+                {
+                    title: "Status",
+                    field: "doc_status",
+                    width: 100,
+                    hozAlign: "center",
+                    formatter: function(cell) {
+                        const val = cell.getValue() || 'Draft';
+                        const cls = val === 'Approved' ? 'status-approved' : 'status-draft';
+                        return `<span class="status-badge ${cls}">${val}</span>`;
+                    }
+                },
+                {title: "Created By", field: "created_by", width: 110, editor: false}
+            ]
+        });
+    }
+
+    function addRow() {
+        const today = new Date().toISOString().slice(0, 10);
+        table.addRow({
+            doc_date: today,
+            doc_status: 'Draft',
+            created_by: '{{ session.get("username", "admin") }}'
+        }, true);
+        markDirty();
+        const curRows = table.getData().length;
+        const totalEl = document.getElementById('totalCount');
+        const total = Math.max(curRows, (parseInt(totalEl.textContent) || 0) + 1);
+        document.getElementById('rowCount').textContent = curRows;
+        document.getElementById('totalCount').textContent = total;
+    }
+
+    async function saveAll() {
+        const rows = table.getRows();
+        let savedCount = 0;
+        for (const row of rows) {
+            const data = row.getData();
+            if (!data.vcn_doc_num && !data.vessel_name && !data.barge_name) continue;
+            try {
+                const res = await fetch('/api/module/BGT01/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const resData = await res.json();
+                if (resData.success) {
+                    row.update({ id: resData.id });
+                    savedCount++;
+                }
+            } catch(e) {
+                console.error('Error saving row:', e);
+            }
+        }
+        headerDirty = false;
+        dirtyRowIds.clear();
+        document.getElementById('unsavedBanner').style.display = 'none';
+        const st = document.getElementById('saveStatus');
+        st.textContent = '✓ Saved successfully!';
+        setTimeout(() => { st.textContent = ''; }, 3000);
+        table.setData();
+    }
+
+    async function deleteSelected() {
+        const selected = table.getSelectedRows();
+        if (selected.length === 0) { alert('Select rows to delete.'); return; }
+        if (!confirm(`Delete ${selected.length} row(s)?`)) return;
+
+        for (const row of selected) {
+            const data = row.getData();
+            if (data.id) {
+                await fetch('/api/module/BGT01/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id: data.id })
+                });
+            }
+            row.delete();
+        }
+        table.setData();
+    }
+
+    // ── DETAILS MODAL (TUG MOVEMENT FOR BARGE) ──────────────────────────────────
+    async function openDetailsModal(headerData) {
+        currentHeaderId = headerData.id;
+        currentHeaderData = headerData;
+
+        await loadMasters();
+
+        const tripText = headerData.trip_number ? ` (Trip: ${headerData.trip_number})` : '';
+        document.getElementById('modalTitle').textContent = `Details for ${headerData.vcn_doc_num || ''} — ${headerData.vessel_name || ''} | Barge: ${headerData.barge_name || ''}${tripText}`;
+        document.getElementById('modalSubTitle').textContent = `Cargo: ${headerData.cargo_name || 'N/A'} | Doc Date: ${headerData.doc_date || ''}`;
+
+        document.getElementById('detailsModal').classList.add('active');
+        await loadActivityTable(currentHeaderId);
+    }
+
+    function closeDetailsModal() {
+        document.getElementById('detailsModal').classList.remove('active');
+        currentHeaderId = null;
+        currentHeaderData = null;
+        if (activityTable) {
+            activityTable.destroy();
+            activityTable = null;
+        }
+    }
+
+    // Close modal when clicking outside or pressing Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('detailsModal');
+            if (modal && modal.classList.contains('active')) closeDetailsModal();
+        }
+    });
+
+    function formatDateTimeDisplay(val) {
+        if (!val) return '';
+        const clean = String(val).replace('T', ' ').trim();
+        const parts = clean.split(' ');
+        if (parts.length >= 2) {
+            const d = parts[0].split('-');
+            if (d.length === 3) {
+                if (d[0].length === 4) { // YYYY-MM-DD
+                    return `${d[2]}-${d[1]}-${d[0]} ${parts[1].slice(0, 5)}`;
+                }
+                return clean;
+            }
+        } else if (parts[0].includes('-')) {
+            const d = parts[0].split('-');
+            if (d.length === 3 && d[0].length === 4) {
+                return `${d[2]}-${d[1]}-${d[0]}`;
+            }
+        }
+        return val;
+    }
+
+    var datetimeLocalEditor = function(cell, onRendered, success, cancel) {
+        var raw = cell.getValue() || '';
+        var input = document.createElement("input");
+        input.type = "datetime-local";
+        input.style.width = "100%";
+        input.style.boxSizing = "border-box";
+        input.style.padding = "4px";
+        input.style.fontSize = "12px";
+        input.style.fontFamily = "inherit";
+
+        // Convert stored format to YYYY-MM-DDTHH:mm for datetime-local picker
+        if (raw) {
+            var str = String(raw).trim();
+            if (str.includes('T')) {
+                input.value = str.slice(0, 16);
+            } else if (str.includes(' ')) {
+                var p = str.split(' ');
+                var d = p[0].split('-');
+                var t = (p[1] || '00:00').slice(0, 5);
+                if (d.length === 3) {
+                    if (d[0].length === 4) { // YYYY-MM-DD
+                        input.value = `${d[0]}-${d[1].padStart(2,'0')}-${d[2].padStart(2,'0')}T${t}`;
+                    } else { // DD-MM-YYYY
+                        input.value = `${d[2]}-${d[1].padStart(2,'0')}-${d[0].padStart(2,'0')}T${t}`;
+                    }
+                }
+            } else if (str.includes('-')) {
+                var d = str.split('-');
+                if (d.length === 3) {
+                    if (d[0].length === 4) input.value = `${str}T00:00`;
+                    else input.value = `${d[2]}-${d[1].padStart(2,'0')}-${d[0].padStart(2,'0')}T00:00`;
+                }
+            }
+        } else {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const h = String(now.getHours()).padStart(2, '0');
+            const min = String(now.getMinutes()).padStart(2, '0');
+            input.value = `${y}-${m}-${day}T${h}:${min}`;
+        }
+
+        var resolved = false;
+        function finish(val) {
+            if (resolved) return;
+            resolved = true;
+            success(val);
+        }
+
+        onRendered(function() {
+            input.focus();
+            if (typeof input.showPicker === 'function') {
+                try { input.showPicker(); } catch(e){}
+            }
+        });
+
+        input.addEventListener("change", function() { finish(input.value); });
+        input.addEventListener("blur", function() { finish(input.value); });
+        input.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") finish(input.value);
+            if (e.key === "Escape") { resolved = true; cancel(); }
+        });
+        return input;
+    };
+
+    function calculateRunningHours(startStr, stopStr) {
+        if (!startStr || !stopStr) return '0';
+        try {
+            const start = new Date(startStr);
+            const stop = new Date(stopStr);
+            if (isNaN(start.getTime()) || isNaN(stop.getTime()) || stop < start) return '0';
+            const diffMs = stop - start;
+            const diffMins = Math.floor(diffMs / 60000);
+            const days = Math.floor(diffMins / (24 * 60));
+            const hours = Math.floor((diffMins % (24 * 60)) / 60);
+            const mins = diffMins % 60;
+            let parts = [];
+            if (days > 0) parts.push(days + 'd');
+            if (hours > 0) parts.push(hours + 'h');
+            if (mins > 0) parts.push(mins + 'min');
+            return parts.length > 0 ? parts.join(' ') : '0min';
+        } catch(e) {
+            return '0';
+        }
+    }
+
+    async function loadActivityTable(headerId) {
+        let rawActivities = [];
+        try {
+            const res = await fetch(`/api/module/BGT01/activities/${headerId}`);
+            if (res.ok) rawActivities = await res.json();
+        } catch(e) {
+            console.error('Error fetching activities:', e);
+        }
+
+        const tugList = masters.tugs && masters.tugs.length > 0 ? masters.tugs : ['Tug Ocen Almir', 'Tug Mehul'];
+
+        const tableRows = rawActivities.map(act => {
+            const row = {
+                id: act.id,
+                header_id: act.header_id,
+                movement_date: act.movement_date || currentHeaderData.doc_date,
+                activity: act.activity,
+                from_berth: act.from_berth,
+                to_berth: act.to_berth,
+                marine_officer: act.marine_officer,
+                remark: act.remark
+            };
+            if (act.tugs && Array.isArray(act.tugs)) {
+                act.tugs.forEach(t => {
+                    const tk = 'tug_' + String(t.tug_id).replace(/[^a-zA-Z0-9]/g, '_');
+                    row[`${tk}__engine_start`] = t.engine_start;
+                    row[`${tk}__engine_stop`] = t.engine_stop;
+                    row[`${tk}__t_running_hours`] = t.t_running_hours || calculateRunningHours(t.engine_start, t.engine_stop);
+                    row[`${tk}__fuel_consumption`] = t.fuel_consumption;
+                });
+            }
+            return row;
+        });
+
+        const columns = [
+            {
+                title: "Date & Time",
+                field: "movement_date",
+                width: 155,
+                editor: canEdit ? datetimeLocalEditor : false,
+                formatter: function(cell) {
+                    const val = cell.getValue();
+                    return `<span style="font-weight:600;">${formatDateTimeDisplay(val)}</span>`;
+                }
+            },
+            {
+                title: "Activity",
+                field: "activity",
+                width: 140,
+                editor: canEdit ? "list" : false,
+                editorParams: function() {
+                    return {
+                        values: masters.activities && masters.activities.length ? masters.activities : ['Berthing', 'Shifting', 'Unberthing'],
+                        autocomplete: true,
+                        listOnEmpty: true,
+                        clearable: true
+                    };
+                }
+            },
+            {
+                title: "From Berth",
+                field: "from_berth",
+                width: 130,
+                editor: canEdit ? "list" : false,
+                editorParams: function() {
+                    return {
+                        values: masters.berths || [],
+                        autocomplete: true,
+                        listOnEmpty: true,
+                        clearable: true
+                    };
+                }
+            },
+            {
+                title: "To Berth",
+                field: "to_berth",
+                width: 130,
+                editor: canEdit ? "list" : false,
+                editorParams: function() {
+                    return {
+                        values: masters.berths || [],
+                        autocomplete: true,
+                        listOnEmpty: true,
+                        clearable: true
+                    };
+                }
+            }
+        ];
+
+        // Add column groups for each Tug with exact MBCT01 blue headers
+        tugList.forEach(tugName => {
+            const tk = 'tug_' + String(tugName).replace(/[^a-zA-Z0-9]/g, '_');
+            columns.push({
+                title: tugName,
+                headerHozAlign: "center",
+                columns: [
+                    {
+                        title: "Engine Start",
+                        field: `${tk}__engine_start`,
+                        width: 145,
+                        editor: canEdit ? datetimeLocalEditor : false,
+                        formatter: function(cell) {
+                            return formatDateTimeDisplay(cell.getValue());
+                        },
+                        cellEdited: function(cell) {
+                            const r = cell.getRow();
+                            const st = cell.getValue();
+                            const sp = r.getData()[`${tk}__engine_stop`];
+                            r.update({ [`${tk}__t_running_hours`]: calculateRunningHours(st, sp) });
+                        }
+                    },
+                    {
+                        title: "Engine Stop",
+                        field: `${tk}__engine_stop`,
+                        width: 145,
+                        editor: canEdit ? datetimeLocalEditor : false,
+                        formatter: function(cell) {
+                            return formatDateTimeDisplay(cell.getValue());
+                        },
+                        cellEdited: function(cell) {
+                            const r = cell.getRow();
+                            const sp = cell.getValue();
+                            const st = r.getData()[`${tk}__engine_start`];
+                            r.update({ [`${tk}__t_running_hours`]: calculateRunningHours(st, sp) });
+                        }
+                    },
+                    {
+                        title: "T. Running Hours",
+                        field: `${tk}__t_running_hours`,
+                        width: 120,
+                        hozAlign: "center",
+                        editor: canEdit ? "input" : false,
+                        formatter: function(cell) {
+                            const v = cell.getValue();
+                            return `<b>${v || '0'}</b>`;
+                        }
+                    },
+                    {
+                        title: "Fuel Consumption",
+                        field: `${tk}__fuel_consumption`,
+                        width: 125,
+                        hozAlign: "right",
+                        editor: canEdit ? "number" : false
+                    }
+                ]
+            });
+        });
+
+        columns.push({
+            title: "Marine officer",
+            field: "marine_officer",
+            width: 165,
+            editor: canEdit ? "list" : false,
+            editorParams: function() {
+                return {
+                    values: masters.officers || [],
+                    autocomplete: true,
+                    listOnEmpty: true,
+                    clearable: true
+                };
+            }
+        });
+
+        columns.push({
+            title: "Remark",
+            field: "remark",
+            width: 150,
+            editor: canEdit ? "input" : false
+        });
+
+        if (permissions.can_delete) {
+            columns.push({
+                title: "", width: 50, hozAlign: "center", headerSort: false,
+                formatter: function() { return '<button style="background:none;border:none;color:#e53e3e;font-weight:bold;cursor:pointer;font-size:14px;" title="Delete row">✕</button>'; },
+                cellClick: async function(e, cell) {
+                    const row = cell.getRow();
+                    const actId = row.getData().id;
+                    if (actId) {
+                        if (!confirm('Delete this movement row?')) return;
+                        await fetch('/api/module/BGT01/activity/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ id: actId })
+                        });
+                    }
+                    row.delete();
+                }
+            });
+        }
+
+        activityTable = new Tabulator("#activityTable", {
+            data: tableRows,
+            layout: "fitDataFill",
+            columns: columns
+        });
+    }
+
+    function addActivityRow() {
+        if (!activityTable) return;
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const h = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const defaultDateTime = (currentHeaderData && currentHeaderData.doc_date)
+            ? (currentHeaderData.doc_date.includes('T') ? currentHeaderData.doc_date : `${currentHeaderData.doc_date}T${h}:${min}`)
+            : `${y}-${m}-${day}T${h}:${min}`;
+
+        activityTable.addRow({
+            header_id: currentHeaderId,
+            movement_date: defaultDateTime,
+            activity: 'Berthing',
+            marine_officer: ''
+        }, true);
+    }
+
+    async function saveActivities() {
+        if (!activityTable) return;
+        const rows = activityTable.getRows();
+        const tugList = masters.tugs && masters.tugs.length > 0 ? masters.tugs : ['Tug Ocen Almir', 'Tug Mehul'];
+
+        let savedCount = 0;
+        for (const row of rows) {
+            const data = row.getData();
+            data.header_id = currentHeaderId;
+
+            // Un-pivot tug columns
+            const tugs = [];
+            tugList.forEach(tName => {
+                const tk = 'tug_' + String(tName).replace(/[^a-zA-Z0-9]/g, '_');
+                const start = data[`${tk}__engine_start`];
+                const stop = data[`${tk}__engine_stop`];
+                const hours = data[`${tk}__t_running_hours`];
+                const fuel = data[`${tk}__fuel_consumption`];
+                if (start || stop || hours || fuel) {
+                    tugs.push({
+                        tug_id: tName,
+                        engine_start: start || null,
+                        engine_stop: stop || null,
+                        t_running_hours: hours || null,
+                        fuel_consumption: fuel ? parseFloat(fuel) : null
+                    });
+                }
+            });
+            data.tugs = tugs;
+
+            try {
+                const res = await fetch('/api/module/BGT01/activity/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const resData = await res.json();
+                if (resData.success) {
+                    row.update({ id: resData.id });
+                    savedCount++;
+                }
+            } catch(e) {
+                console.error('Error saving activity:', e);
+            }
+        }
+        alert('Movement details saved successfully!');
+    }
+</script>
+{% endblock %}
