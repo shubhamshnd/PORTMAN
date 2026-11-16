@@ -7132,6 +7132,514 @@ def _build_jetty_discharge_by_cargo_category_sheet(wb, cur, report_date):
     return ws
 
 
+# ============================================================================
+# 5TH SHEET: MBC DISCHARGE REPORT (DAILY PROGRESS REPORT)
+# ============================================================================
+
+def _build_mbc_discharge_sheet(wb, cur, report_date):
+    """
+    Build Sheet 5: MBC Discharge Report matching the exact column sequence (A to AK),
+    colors, cell styling, and generic row-level calculation formulas.
+    Fetches data from mbc_header, mbc_master, mbc_discharge_port_lines, and mbc_load_port_lines.
+    """
+    import calendar
+    from datetime import datetime, date, timedelta
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+
+    # Determine reporting month date range consistent with Sheets 2, 3, 4
+    if report_dt.day == 1:
+        prev_month_last_day = report_dt.replace(day=1) - timedelta(days=1)
+        target_year = prev_month_last_day.year
+        target_month = prev_month_last_day.month
+        month_start_date = date(target_year, target_month, 1)
+        _, last_day_num = calendar.monthrange(target_year, target_month)
+        month_end_date = date(target_year, target_month, last_day_num)
+        start_date = month_start_date
+        end_date = month_end_date
+    else:
+        target_year = report_dt.year
+        target_month = report_dt.month
+        month_start_date = date(target_year, target_month, 1)
+        _, last_day_num = calendar.monthrange(target_year, target_month)
+        month_end_date = date(target_year, target_month, last_day_num)
+        start_date = month_start_date
+        end_date = report_dt.date() - timedelta(days=1)
+
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    # Create Sheet 5
+    ws = wb.create_sheet(title="MBC Discharge")
+    ws.views.sheetView[0].showGridLines = True
+
+    # Column definition list: (Col_Letter, Title, Width, Horizontal_Align, Type)
+    columns_def = [
+        ('A', 'Sr No', 8, 'center', 'int'),
+        ('B', 'MBC Name', 18, 'left', 'str'),
+        ('C', 'Company', 16, 'left', 'str'),
+        ('D', 'Date', 12, 'center', 'date'),
+        ('E', 'Cargo Types', 14, 'center', 'str'),
+        ('F', 'Cargo', 16, 'left', 'str'),
+        ('G', 'BL Qty\n(MT)', 14, 'right', 'qty'),
+        ('H', 'Arrived', 17, 'center', 'dt'),
+        ('I', 'Departure', 17, 'center', 'dt'),
+        ('J', 'Waiting at Gull\n(Hrs)', 15, 'right', 'hrs'),
+        ('K', 'Arrived at Dharamtar', 17, 'center', 'dt'),
+        ('L', 'AMF', 17, 'center', 'dt'),
+        ('M', 'Discharge Commenced', 17, 'center', 'dt'),
+        ('N', 'Gull to jetty', 14, 'right', 'hrs'),
+        ('O', 'Waiting For Discharge\nat Unloading Berth\n(Hrs)', 18, 'right', 'hrs'),
+        ('P', 'Discharge Stop\nfor Shifting\n(Partly)', 17, 'center', 'dt'),
+        ('Q', 'Discharge Start\nafter Shifting\n(Partly)', 17, 'center', 'dt'),
+        ('R', 'Waiting of Partly\nDischarge', 16, 'right', 'hrs'),
+        ('S', 'Cleaning Start', 17, 'center', 'dt'),
+        ('T', 'Discharge Completed', 17, 'center', 'dt'),
+        ('U', 'Gross Unloading Time\n(Hrs)', 16, 'right', 'hrs_green'),
+        ('V', 'Sailed out from Unloading\nBerth', 17, 'center', 'dt'),
+        ('W', 'Sailed out from Dharamtar\nJetty', 17, 'center', 'dt'),
+        ('X', 'Waiting to sail from Dharamtar\n(Hrs)', 16, 'right', 'hrs'),
+        ('Y', 'RMHS Delays', 13, 'right', 'hrs'),
+        ('Z', 'MBC Shifting', 13, 'right', 'hrs'),
+        ('AA', 'Jetty Delays', 13, 'right', 'hrs'),
+        ('AB', 'Bad Weather', 13, 'right', 'hrs'),
+        ('AC', 'Total Delay', 13, 'right', 'hrs'),
+        ('AD', 'Cleaning Time', 13, 'right', 'hrs'),
+        ('AE', 'Net Unloading Time\n(Gross - Bad Wx)\n(Hrs)', 18, 'right', 'hrs'),
+        ('AF', 'Net Unloading Time\n(Gross - Bad Wx - Shifting -\nRMHS Delay)\n(Hrs)', 20, 'right', 'hrs_green'),
+        ('AG', 'Gross TPH', 13, 'right', 'tph'),
+        ('AH', 'Net Unloading TPH\n(Gross - Bad Wx)', 16, 'right', 'tph'),
+        ('AI', 'Net Unloading TPH\n(Gross - Bad Wx - Shifting -\nRMHS Delay)\n(Hrs)', 20, 'right', 'tph'),
+        ('AJ', 'Route', 18, 'center', 'str'),
+        ('AK', 'Remarks', 22, 'left', 'str'),
+    ]
+
+    # Styles
+    fill_normal_hdr = PatternFill('solid', fgColor='C6E0B4')
+    fill_vibrant_hdr = PatternFill('solid', fgColor='00B050')
+    font_header = Font(name='Calibri', size=10, bold=True, color='000000')
+    align_header = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    thin_side = Side(style='thin', color='A6A6A6')
+    cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    data_font = Font(name='Calibri', size=10, bold=False, color='000000')
+
+    # Set row 1 height and headers
+    ws.row_dimensions[1].height = 55
+    for col_idx, (col_let, col_title, col_width, _, col_type) in enumerate(columns_def, 1):
+        ws.column_dimensions[col_let].width = col_width
+        cell = ws.cell(1, col_idx, col_title)
+        cell.font = font_header
+        cell.alignment = align_header
+        cell.border = cell_border
+        if col_type == 'hrs_green':
+            cell.fill = fill_vibrant_hdr
+        else:
+            cell.fill = fill_normal_hdr
+
+    # Query delays by mbc_id
+    cur.execute("""
+        SELECT
+            mbc_id,
+            SUM(CASE WHEN delay_name ILIKE '%RMHS%' OR delay_account_type ILIKE '%RMHS%' OR equipment_name ILIKE '%CONVEYOR%' OR equipment_name ILIKE '%BELT%' THEN total_time_hrs ELSE 0 END) AS rmhs_delays,
+            SUM(CASE WHEN delay_name ILIKE '%SHIFT%' THEN total_time_hrs ELSE 0 END) AS mbc_shifting,
+            SUM(CASE WHEN delay_name ILIKE '%WEATHER%' OR delay_name ILIKE '%RAIN%' OR delay_account_type ILIKE '%Weather%' THEN total_time_hrs ELSE 0 END) AS bad_weather,
+            SUM(CASE WHEN delay_name NOT ILIKE '%RMHS%' AND delay_name NOT ILIKE '%SHIFT%' AND delay_name NOT ILIKE '%WEATHER%' AND delay_name NOT ILIKE '%RAIN%' AND delay_account_type NOT ILIKE '%Weather%' AND delay_account_type NOT ILIKE '%RMHS%' THEN total_time_hrs ELSE 0 END) AS jetty_delays
+        FROM mbc_delays
+        GROUP BY mbc_id
+    """)
+    delays_map = {}
+    for r in cur.fetchall():
+        delays_map[r['mbc_id']] = {
+            'rmhs': float(r['rmhs_delays'] or 0),
+            'shift': float(r['mbc_shifting'] or 0),
+            'bad_wx': float(r['bad_weather'] or 0),
+            'jetty': float(r['jetty_delays'] or 0)
+        }
+
+    # Query MBC records
+    query = """
+        SELECT
+            mh.id,
+            mh.doc_num,
+            mh.doc_date,
+            mh.mbc_name,
+            COALESCE(mm.mbc_owner_name, '') AS company,
+            mh.cargo_type,
+            mh.cargo_name,
+            COALESCE(mh.bl_quantity, 0) AS bl_quantity,
+            mh.load_port,
+            dpl.arrival_gull_island,
+            dpl.departure_gull_island,
+            dpl.vessel_arrival_port,
+            dpl.vessel_all_made_fast,
+            dpl.unloading_commenced,
+            dpl.discharge_stop_shifting,
+            dpl.discharge_start_shifting,
+            dpl.cleaning_commenced,
+            dpl.unloading_completed,
+            dpl.vessel_cast_off,
+            dpl.sailed_out_load_port,
+            (SELECT route_name FROM lueu_lines ll WHERE ll.source_type='MBC' AND ll.source_id=mh.id AND ll.route_name IS NOT NULL LIMIT 1) AS route_name
+        FROM mbc_header mh
+        LEFT JOIN mbc_master mm
+            ON UPPER(TRIM(mh.mbc_name)) = UPPER(TRIM(mm.mbc_name))
+        LEFT JOIN (
+            SELECT DISTINCT ON (mbc_id) *
+            FROM mbc_discharge_port_lines
+            ORDER BY mbc_id, id DESC
+        ) dpl ON dpl.mbc_id = mh.id
+        LEFT JOIN (
+            SELECT DISTINCT ON (mbc_id) *
+            FROM mbc_load_port_lines
+            ORDER BY mbc_id, id DESC
+        ) lpl ON lpl.mbc_id = mh.id
+        WHERE (
+            (mh.doc_date >= %(start_str)s AND mh.doc_date <= %(end_str)s)
+            OR (SUBSTRING(dpl.vessel_arrival_port FROM 1 FOR 10) >= %(start_str)s AND SUBSTRING(dpl.vessel_arrival_port FROM 1 FOR 10) <= %(end_str)s)
+            OR (SUBSTRING(dpl.unloading_commenced FROM 1 FOR 10) >= %(start_str)s AND SUBSTRING(dpl.unloading_commenced FROM 1 FOR 10) <= %(end_str)s)
+        )
+        ORDER BY
+            COALESCE(NULLIF(TRIM(dpl.unloading_commenced), ''), NULLIF(TRIM(dpl.vessel_arrival_port), ''), mh.doc_date) ASC,
+            mh.id ASC
+    """
+    cur.execute(query, {'start_str': start_str, 'end_str': end_str})
+    records = cur.fetchall()
+
+    def _to_dt(val):
+        if not val:
+            return None
+        if isinstance(val, datetime):
+            return val
+        if isinstance(val, date):
+            return datetime(val.year, val.month, val.day)
+        s = str(val).replace('T', ' ').strip()
+        for f in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d-%m-%Y %H:%M', '%Y-%m-%d'):
+            try:
+                return datetime.strptime(s, f)
+            except ValueError:
+                pass
+        try:
+            return datetime.strptime(s[:16], '%Y-%m-%d %H:%M')
+        except Exception:
+            return None
+
+    # Write data rows
+    curr_row = 2
+    for idx, row in enumerate(records, 1):
+        ws.row_dimensions[curr_row].height = 20
+        r = curr_row
+
+        # Parse timestamps
+        h_dt = _to_dt(row['arrival_gull_island'])
+        i_dt = _to_dt(row['departure_gull_island'])
+        k_dt = _to_dt(row['vessel_arrival_port'])
+        l_dt = _to_dt(row['vessel_all_made_fast'])
+        m_dt = _to_dt(row['unloading_commenced'])
+        p_dt = _to_dt(row['discharge_stop_shifting'])
+        q_dt = _to_dt(row['discharge_start_shifting'])
+        s_dt = _to_dt(row['cleaning_commenced'])
+        t_dt = _to_dt(row['unloading_completed'])
+        v_dt = _to_dt(row['vessel_cast_off'])
+        w_dt = _to_dt(row['sailed_out_load_port'])
+
+        # Delays
+        d_info = delays_map.get(row['id'], {'rmhs': 0.0, 'shift': 0.0, 'bad_wx': 0.0, 'jetty': 0.0})
+
+        # Cell A: Sr No
+        cA = ws.cell(r, 1, idx)
+        cA.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell B: MBC Name
+        cB = ws.cell(r, 2, row['mbc_name'] or '')
+        cB.alignment = Alignment(horizontal='left', vertical='center')
+
+        # Cell C: Company
+        cC = ws.cell(r, 3, row['company'] or '')
+        cC.alignment = Alignment(horizontal='left', vertical='center')
+
+        # Cell D: Date (If AMF time is before 6 AM, operational date is previous day)
+        if l_dt:
+            cD = ws.cell(r, 4, f'=IF(HOUR(L{r})<6, TEXT(L{r}-1, "DD-MM-YYYY"), TEXT(L{r}, "DD-MM-YYYY"))')
+        else:
+            d_val_str = ''
+            if row.get('doc_date'):
+                try:
+                    d_val_str = datetime.strptime(str(row['doc_date'])[:10], '%Y-%m-%d').strftime('%d-%m-%Y')
+                except Exception:
+                    d_val_str = str(row['doc_date'])
+            if d_val_str:
+                cD = ws.cell(r, 4, f'=IF(L{r}="","{d_val_str}",IF(HOUR(L{r})<6, TEXT(L{r}-1, "DD-MM-YYYY"), TEXT(L{r}, "DD-MM-YYYY")))')
+            else:
+                cD = ws.cell(r, 4, f'=IF(L{r}="","",IF(HOUR(L{r})<6, TEXT(L{r}-1, "DD-MM-YYYY"), TEXT(L{r}, "DD-MM-YYYY")))')
+        cD.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell E: Cargo Types
+        cE = ws.cell(r, 5, row['cargo_type'] or '')
+        cE.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell F: Cargo
+        cF = ws.cell(r, 6, row['cargo_name'] or '')
+        cF.alignment = Alignment(horizontal='left', vertical='center')
+
+        # Cell G: BL Qty (MT)
+        cG = ws.cell(r, 7, float(row['bl_quantity'] or 0))
+        cG.number_format = '#,##0.00'
+        cG.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell H: Arrived (Gull)
+        cH = ws.cell(r, 8, h_dt if h_dt else '')
+        if h_dt:
+            cH.number_format = 'yyyy-mm-dd hh:mm'
+        cH.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell I: Departure (Gull)
+        cI = ws.cell(r, 9, i_dt if i_dt else '')
+        if i_dt:
+            cI.number_format = 'yyyy-mm-dd hh:mm'
+        cI.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell J: Waiting at Gull (Hrs)
+        if i_dt and h_dt:
+            cJ = ws.cell(r, 10, f"=(I{r}-H{r})*24")
+        else:
+            cJ = ws.cell(r, 10, f'=IF(AND(I{r}<>"",H{r}<>""),(I{r}-H{r})*24,"")')
+        cJ.number_format = '0.00'
+        cJ.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell K: Arrived at Dharamtar
+        cK = ws.cell(r, 11, k_dt if k_dt else '')
+        if k_dt:
+            cK.number_format = 'yyyy-mm-dd hh:mm'
+        cK.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell L: AMF
+        cL = ws.cell(r, 12, l_dt if l_dt else '')
+        if l_dt:
+            cL.number_format = 'yyyy-mm-dd hh:mm'
+        cL.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell M: Discharge Commenced
+        cM = ws.cell(r, 13, m_dt if m_dt else '')
+        if m_dt:
+            cM.number_format = 'yyyy-mm-dd hh:mm'
+        cM.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell N: Gull to jetty: =(K2-I2)*24
+        if k_dt and i_dt:
+            cN = ws.cell(r, 14, f"=(K{r}-I{r})*24")
+        else:
+            cN = ws.cell(r, 14, f'=IF(AND(K{r}<>"",I{r}<>""),(K{r}-I{r})*24,"")')
+        cN.number_format = '0.00'
+        cN.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell O: Berth (Hrs) / Waiting For Discharge at Unloading Berth (Hrs): =(M2-K2)*24
+        if m_dt and k_dt:
+            cO = ws.cell(r, 15, f"=(M{r}-K{r})*24")
+        else:
+            cO = ws.cell(r, 15, f'=IF(AND(M{r}<>"",K{r}<>""),(M{r}-K{r})*24,"")')
+        cO.number_format = '0.00'
+        cO.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell P: Discharge Stop for Shifting (Partly)
+        cP = ws.cell(r, 16, p_dt if p_dt else '')
+        if p_dt:
+            cP.number_format = 'yyyy-mm-dd hh:mm'
+        cP.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell Q: Discharge Start after Shifting (Partly)
+        cQ = ws.cell(r, 17, q_dt if q_dt else '')
+        if q_dt:
+            cQ.number_format = 'yyyy-mm-dd hh:mm'
+        cQ.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell R: Waiting of Partly Discharge: =(Q2-P2)*24
+        if q_dt and p_dt:
+            cR = ws.cell(r, 18, f"=(Q{r}-P{r})*24")
+        else:
+            cR = ws.cell(r, 18, f'=IF(AND(Q{r}<>"",P{r}<>""),(Q{r}-P{r})*24,"")')
+        cR.number_format = '0.00'
+        cR.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell S: Cleaning Start
+        cS = ws.cell(r, 19, s_dt if s_dt else '')
+        if s_dt:
+            cS.number_format = 'yyyy-mm-dd hh:mm'
+        cS.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell T: Discharge Completed
+        cT = ws.cell(r, 20, t_dt if t_dt else '')
+        if t_dt:
+            cT.number_format = 'yyyy-mm-dd hh:mm'
+        cT.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell U: Gross Unloading Time: =((T2-M2)*24)
+        if t_dt and m_dt:
+            cU = ws.cell(r, 21, f"=((T{r}-M{r})*24)")
+        else:
+            cU = ws.cell(r, 21, f'=IF(AND(T{r}<>"",M{r}<>""),((T{r}-M{r})*24),"")')
+        cU.number_format = '0.00'
+        cU.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell V: Sailed out from Unloading Berth
+        cV = ws.cell(r, 22, v_dt if v_dt else '')
+        if v_dt:
+            cV.number_format = 'yyyy-mm-dd hh:mm'
+        cV.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell W: Sailed out from Dharamtar Jetty
+        cW = ws.cell(r, 23, w_dt if w_dt else '')
+        if w_dt:
+            cW.number_format = 'yyyy-mm-dd hh:mm'
+        cW.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell X: Waiting to sail from Dharamtar: =((V2-T2)*24)
+        if v_dt and t_dt:
+            cX = ws.cell(r, 24, f"=((V{r}-T{r})*24)")
+        else:
+            cX = ws.cell(r, 24, f'=IF(AND(V{r}<>"",T{r}<>""),((V{r}-T{r})*24),"")')
+        cX.number_format = '0.00'
+        cX.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell Y: RMHS Delays
+        cY = ws.cell(r, 25, d_info['rmhs'])
+        cY.number_format = '0.00'
+        cY.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell Z: MBC Shifting
+        cZ = ws.cell(r, 26, d_info['shift'])
+        cZ.number_format = '0.00'
+        cZ.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AA: Jetty Delays
+        cAA = ws.cell(r, 27, d_info['jetty'])
+        cAA.number_format = '0.00'
+        cAA.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AB: Bad Weather
+        cAB = ws.cell(r, 28, d_info['bad_wx'])
+        cAB.number_format = '0.00'
+        cAB.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AC: Total Delay: =SUM(Y2:AB2)
+        cAC = ws.cell(r, 29, f"=SUM(Y{r}:AB{r})")
+        cAC.number_format = '0.00'
+        cAC.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AD: Cleaning Time: =(T2-S2)*24
+        if t_dt and s_dt:
+            cAD = ws.cell(r, 30, f"=(T{r}-S{r})*24")
+        else:
+            cAD = ws.cell(r, 30, f'=IF(AND(T{r}<>"",S{r}<>""),(T{r}-S{r})*24,"")')
+        cAD.number_format = '0.00'
+        cAD.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AE: Net Unloading Time (Gross - Bad Wx) (Hrs): =U2-AB2
+        cAE = ws.cell(r, 31, f'=IF(U{r}<>"",U{r}-AB{r},"")')
+        cAE.number_format = '0.00'
+        cAE.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AF: Net Unloading Time: =(U - Y - Z - AA - AB)
+        if t_dt and m_dt:
+            cAF = ws.cell(r, 32, f"=(U{r}-Y{r}-Z{r}-AA{r}-AB{r})")
+        else:
+            cAF = ws.cell(r, 32, f'=IF(U{r}<>"",(U{r}-Y{r}-Z{r}-AA{r}-AB{r}),"")')
+        cAF.number_format = '0.00'
+        cAF.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AG: Gross TPH: =G/U
+        if t_dt and m_dt:
+            cAG = ws.cell(r, 33, f"=G{r}/U{r}")
+        else:
+            cAG = ws.cell(r, 33, f'=IF(AND(U{r}<>"",U{r}>0),G{r}/U{r},0)')
+        cAG.number_format = '0.00'
+        cAG.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AH: Net Unloading TPH: =G/AF
+        if t_dt and m_dt:
+            cAH = ws.cell(r, 34, f"=G{r}/AF{r}")
+        else:
+            cAH = ws.cell(r, 34, f'=IF(AND(AF{r}<>"",AF{r}>0),G{r}/AF{r},0)')
+        cAH.number_format = '0.00'
+        cAH.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AI: Net Unloading TPH: =G/AF
+        if t_dt and m_dt:
+            cAI = ws.cell(r, 35, f"=G{r}/AF{r}")
+        else:
+            cAI = ws.cell(r, 35, f'=IF(AND(AF{r}<>"",AF{r}>0),G{r}/AF{r},0)')
+        cAI.number_format = '0.00'
+        cAI.alignment = Alignment(horizontal='right', vertical='center')
+
+        # Cell AJ: Route
+        route_val = row['route_name'] or row['load_port'] or ''
+        cAJ = ws.cell(r, 36, route_val)
+        cAJ.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Cell AK: Remarks
+        cAK = ws.cell(r, 37, '')
+        cAK.alignment = Alignment(horizontal='left', vertical='center')
+
+        # Apply borders and font to all cells in data row
+        for col_idx in range(1, 38):
+            cell = ws.cell(r, col_idx)
+            cell.font = data_font
+            cell.border = cell_border
+
+        curr_row += 1
+
+    # Total row at bottom
+    bot_row = curr_row
+    ws.row_dimensions[bot_row].height = 22
+    total_font = Font(name='Calibri', size=10, bold=True, color='000000')
+    total_fill = PatternFill('solid', fgColor='E2EFDA')
+    double_bottom_border = Border(
+        left=thin_side, right=thin_side, top=thin_side,
+        bottom=Side(style='double', color='000000')
+    )
+
+    for col_idx in range(1, 38):
+        cell = ws.cell(bot_row, col_idx)
+        cell.font = total_font
+        cell.fill = total_fill
+        cell.border = double_bottom_border
+        cell.alignment = Alignment(horizontal='right', vertical='center')
+
+    ws.cell(bot_row, 1, "TOTAL").alignment = Alignment(horizontal='center', vertical='center')
+
+    if len(records) > 0:
+        max_r = bot_row - 1
+        # G: BL Qty
+        ws.cell(bot_row, 7, f"=SUM(G2:G{max_r})").number_format = '#,##0.00'
+        # U: Gross Unloading Time
+        ws.cell(bot_row, 21, f"=SUM(U2:U{max_r})").number_format = '#,##0.00'
+        # Y to AC: Delays
+        for ci in range(25, 30):
+            cl = get_column_letter(ci)
+            ws.cell(bot_row, ci, f"=SUM({cl}2:{cl}{max_r})").number_format = '#,##0.00'
+        # AD: Cleaning Time
+        ws.cell(bot_row, 30, f"=SUM(AD2:AD{max_r})").number_format = '#,##0.00'
+        # AE: Net Time (Gross - Bad Wx)
+        ws.cell(bot_row, 31, f"=SUM(AE2:AE{max_r})").number_format = '#,##0.00'
+        # AF: Net Time (Gross - Bad Wx - Shifting - RMHS)
+        ws.cell(bot_row, 32, f"=SUM(AF2:AF{max_r})").number_format = '#,##0.00'
+        # AG: Overall Gross TPH
+        ws.cell(bot_row, 33, f"=IF(U{bot_row}>0,G{bot_row}/U{bot_row},0)").number_format = '0.00'
+        # AH: Overall Net TPH (using AF)
+        ws.cell(bot_row, 34, f"=IF(AF{bot_row}>0,G{bot_row}/AF{bot_row},0)").number_format = '0.00'
+        # AI: Overall Net TPH (using AF)
+        ws.cell(bot_row, 35, f"=IF(AF{bot_row}>0,G{bot_row}/AF{bot_row},0)").number_format = '0.00'
+
+        # AutoFilter across columns A:AK
+        ws.auto_filter.ref = f"A1:AK{max_r}"
+    else:
+        ws.auto_filter.ref = "A1:AK1"
+
+    return ws
+
+
 @bp.route(
     '/api/module/RP01/daily_progress_report_excel',
     methods=['GET', 'POST']
@@ -9139,6 +9647,12 @@ def daily_progress_report_excel():
         # =====================================================
 
         _build_jetty_discharge_by_cargo_category_sheet(wb, cur, report_date)
+
+        # =====================================================
+        # SHEET 5: MBC DISCHARGE REPORT
+        # =====================================================
+
+        _build_mbc_discharge_sheet(wb, cur, report_date)
 
         # =====================================================
         # GENERATE FILE
