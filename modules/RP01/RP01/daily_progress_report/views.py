@@ -5594,12 +5594,20 @@ def _load_dynamic_delay_columns(cur):
         'Sen @ J-1': 'CS',
         'BUL-1': 'CV', 'BUL-2': 'CW', 'BUL-3': 'CX', 'BUL-4': 'CY', 'BUL-5': 'CZ'
     }
-    no_cargo_map = {}
+    no_cargo_map = {
+        'BUs': 'CP',
+        'BU 1': 'CQ',
+        'BU 2': 'CR',
+        'Sen @ J-1': 'CS',
+        'BU-1 + Sen J1': 'CT',
+        'Sen @ J-5 / EX 650': 'CU',
+        'Sen @ J-5': 'CU',
+        'Excavator 285': 'CU'
+    }
 
     for s_name in ['BU 1', 'BU 2', 'Sen @ J-1']:
         k = no_cargo_std.get(s_name)
         if k:
-            no_cargo_map[s_name] = k
             col_item = (k, 'No Cargo', s_name)
             no_cargo_cols.append(col_item)
             delay_columns.append(col_item)
@@ -5608,9 +5616,6 @@ def _load_dynamic_delay_columns(cur):
     col_cu = ('CU', 'No Cargo', 'Sen @ J-5 / EX 650')
     no_cargo_cols.extend([col_ct, col_cu])
     delay_columns.extend([col_ct, col_cu])
-    no_cargo_map['BU-1 + Sen J1'] = 'CT'
-    no_cargo_map['Sen @ J-5 / EX 650'] = 'CU'
-    no_cargo_map['Sen @ J-5'] = 'CU'
 
     idx_nc_extra = 1
     for eq in equipments:
@@ -5635,7 +5640,10 @@ def _load_dynamic_delay_columns(cur):
         'BUL-1': 'DF', 'BUL-2': 'DG', 'BUL-3': 'DH', 'BUL-4': 'DI', 'BUL-5': 'DJ',
         'Excavator 285': 'DK'
     }
-    non_avail_map = {}
+    non_avail_map = {
+        'BUs': 'DA',
+        'Jetty Conveyors': 'DL'
+    }
     idx_na_extra = 1
     for eq in equipments:
         s_name = eq['short_name']
@@ -5650,7 +5658,6 @@ def _load_dynamic_delay_columns(cur):
     col_dl = ('DL', 'Non Availability of Equipments', 'Jetty Conveyors')
     non_avail_cols.append(col_dl)
     delay_columns.append(col_dl)
-    non_avail_map['Jetty Conveyors'] = 'DL'
 
     # 5. Idle Equipments
     idle_cols = []
@@ -5750,83 +5757,59 @@ def _classify_delay(delay_name, eq_norm, system_name, dispatch_maps=None):
     non_avail_map = dispatch_maps.get('non_avail_map', {})
     idle_map = dispatch_maps.get('idle_map', {})
 
-    # 1. BAD WEATHER
-    if 'BAD WEATHER' in dn or 'BAD WX' in dn:
+    if 'BAD WEATHER' in dn or 'WEATHER' in dn or 'RAIN' in dn:
         return ('BAD_WX', None)
 
-    # 2. RMHS System routes
-    if 'C-131 A' in dn or 'C 131 A' in dn or 'C-131 A' in sn or 'C 131 A' in sn:
+    # 1. RMHS System
+    if 'C-131 A' in dn or 'C 131 A' in dn or 'C-131 A' in sn:
         return ('RMHS', 'BY')
-    elif 'C-131 C' in dn or 'C-131 D' in dn or 'C 131 C' in dn or 'C 131 D' in dn or \
-         'C-131 C' in sn or 'C-131 D' in sn or 'C 131 C' in sn or 'C 131 D' in sn:
+    elif 'C-131 C' in dn or 'C-131 D' in dn or 'C 131 C' in dn or 'C 131 D' in dn or 'C-131 C' in sn or 'C-131 D' in sn:
         return ('RMHS', 'BZ')
-    elif 'C-131 E' in dn or 'C 131 E' in dn or 'C-131 E' in sn or 'C 131 E' in sn:
+    elif 'C-131 E' in dn or 'C 131 E' in dn or 'C-131 E' in sn:
         return ('RMHS', 'CA')
-    elif 'C-131 F' in dn or 'C 131 F' in dn or 'C-131 F' in sn or 'C 131 F' in sn:
+    elif 'C-131 F' in dn or 'C 131 F' in dn or 'C-131 F' in sn:
         return ('RMHS', 'CB')
-    elif 'C-131' in dn or 'C 131' in dn or 'C-131' in sn or 'C 131' in sn:
+    elif 'C-131' in dn or 'C 131' in dn or 'C-131' in sn:
         return ('RMHS', 'BX')
-    elif 'STACKER ROUTE' in dn or 'COAL STACKER' in dn or 'STACKER ROUTE' in sn or 'COAL STACKER' in sn:
+    elif 'STACKER ROUTE' in dn or 'COAL STACKER' in dn:
         return ('RMHS', 'CC')
-    elif any(x in dn or x in sn for x in ['LS-1', 'LS-2', 'LS-3', 'LS 1', 'LS 2', 'LS 3']):
+    elif any(x in dn for x in ['LS-1', 'LS-2', 'LS-3', 'LS 1', 'LS 2', 'LS 3']):
         return ('RMHS', 'CD')
-    elif 'LS-5' in dn or 'LS 5' in dn or 'CEMENT' in dn or 'LS-5' in sn or 'LS 5' in sn or 'CEMENT' in sn:
+    elif 'LS-5' in dn or 'LS 5' in dn or 'CEMENT' in dn:
         return ('RMHS', 'CE')
 
-    # 3. Equipments idle for DTC
-    # ONLY for delays explicitly relating to DTC (Direct Truck Cargo / Dumper Loading)
-    if 'DTC' in dn or 'DTC' in sn or 'DIRECT TRUCK' in dn or 'IDLE FOR DTC' in dn or 'IDLE DUE TO DTC' in dn:
+    # 2. Equipments idle for DTC (Different types of Cargo)
+    if 'DIFFERENT TYPE' in dn or 'DIFFERENT CARGO' in dn or 'DTC' in dn or 'IDLE FOR DTC' in dn or 'IDLE DUE TO DTC' in dn:
         col_key = dtc_map.get(eq_norm, 'CF')
         return ('IDLE_DTC', col_key)
 
+    # 3. No Cargo
+    if 'NO CARGO' in dn or 'WANT OF CARGO' in dn or 'WAITING FOR CARGO' in dn:
+        col_key = no_cargo_map.get(eq_norm, 'CP')
+        return ('NO_CARGO', col_key)
+
     # 4. Non Availability of Equipments
-    # Check if this delay represents a breakdown/jamming/cleaning on Jetty Conveyors / Receipt routes
-    is_conveyor_issue = (
-        'CONVEYOR' in dn or 'CONVEYOR' in sn or
-        'BELT' in dn or 'BELT' in sn or
-        'CHUTE' in dn or 'CHUTE' in sn or
-        'HOPPER' in dn or 'HOPPER' in sn or
-        'JAMMING' in dn or 'JAMMING' in sn or
-        'FEEDER' in dn or 'FEEDER' in sn or
-        'LT TRACK' in dn or 'LT TRACK' in sn or
-        sn.startswith('DR') or sn.startswith('SC') or sn.startswith('C-10') or
-        'DR-' in sn or 'SC-' in sn or 'C-10' in sn
+    is_non_avail = (
+        any(x in dn for x in ['BREAKDOWN', 'SHUTDOWN', 'MAINTENANCE', 'POWER FAILURE', 'JAMMING', 'FEEDER'])
+        or (dn == 'IDLE' and eq_norm == 'Excavator 285')
+        or (dn == 'NO OPERATOR' and eq_norm == 'Excavator 285')
     )
-    if any(x in dn for x in ['BREAKDOWN', 'SHUTDOWN', 'MAINTENANCE', 'POWER FAILURE', 'JAMMING', 'CLEANING']):
-        if is_conveyor_issue:
-            return ('NON_AVAIL', 'DL')  # Jetty Conveyors
+    if is_non_avail:
+        is_jetty_conveyor = (
+            any(sn.startswith(p) for p in ['DR', 'SC', 'C-103', 'DR-', 'SC-'])
+            or any(x in sn for x in ['CONVEYOR', 'BELT', 'CHUTE', 'FEEDER', 'ROUTE'])
+            or any(x in dn for x in ['CONVEYOR', 'BELT', 'CHUTE', 'FEEDER', 'TRACK CLEANING', 'JAMMING'])
+        )
+        if is_jetty_conveyor:
+            return ('NON_AVAIL', 'DL')
         col_key = non_avail_map.get(eq_norm, 'DA')
         return ('NON_AVAIL', col_key)
 
-    # 5. No Cargo
-    # Delays representing lack of cargo or waiting for barge: No Cargo, Waiting for MBC, Want of Barge, Barge Shifting
-    is_no_cargo = (
-        'NO CARGO' in dn or
-        'WAITING FOR MBC' in dn or
-        'WANT OF BARGE' in dn or
-        'WAITING FOR BARGE' in dn or
-        'MORE TIME TO CAST OFF' in dn or
-        'BARGE/ MBC SHIFTING' in dn or
-        'BARGE SHIFTING' in dn or
-        'MBC SHIFTING' in dn
-    )
-    if is_no_cargo:
-        if eq_norm == 'BU 1':
-            return ('NO_CARGO', 'CT')  # BU-1 + Sen J1
-        elif eq_norm == 'Sen @ J-1':
-            if any(x in sn for x in ['C-103', 'BU', 'J1', 'J-1', 'JETTY 1']) or not sn:
-                return ('NO_CARGO', 'CT')  # BU-1 + Sen J1
-            return ('NO_CARGO', 'CS')      # Sen @ J-1
-        elif eq_norm in ('Sen @ J-5', 'Excavator 285'):
-            return ('NO_CARGO', 'CU')      # Sen @ J-5 / EX 650
-        elif eq_norm in no_cargo_map:
-            return ('NO_CARGO', no_cargo_map[eq_norm])
-        return ('NO_CARGO', 'CP')          # BUs
-
-    # 6. Idle Equipments (specifically logged as Idle Equipment)
+    # 5. Idle Equipments
     if 'IDLE EQUIPMENT' in dn or 'IDLE EQUIPMENTS' in dn:
         if eq_norm in idle_map:
             return ('IDLE_EQ', idle_map[eq_norm])
+        return ('IDLE_EQ', 'DM')
 
     return ('OTHER', None)
 
@@ -5851,7 +5834,6 @@ def _get_jetty_discharge_data(cur, report_date):
         month_start_date = date(target_year, target_month, 1)
         _, last_day_num = calendar.monthrange(target_year, target_month)
         month_end_date = date(target_year, target_month, last_day_num)
-        # Exclude selected date from Jetty Discharge report (show data up to selected date - 1 day)
         data_cutoff_date = report_dt.date() - timedelta(days=1)
 
     month_name = calendar.month_name[target_month]
