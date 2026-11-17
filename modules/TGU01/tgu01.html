@@ -1,0 +1,629 @@
+{% extends "base.html" %}
+
+{% block title %}Tug Utilization - PORTMAN{% endblock %}
+
+{% block head %}
+<style>
+    /* ── LUEU01-style 3D Pushable Tug Cards ─────────────────────── */
+    .tug-btn-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 18px;
+        padding: 20px 0;
+    }
+    .eq-pushable {
+        position: relative;
+        border: none;
+        background: transparent;
+        padding: 0;
+        cursor: pointer;
+        outline-offset: 4px;
+        transition: filter 250ms;
+        user-select: none;
+        width: 100%;
+    }
+    .eq-shadow {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.25);
+        will-change: transform;
+        transform: translateY(3px);
+        transition: transform 600ms cubic-bezier(.3, .7, .4, 1);
+    }
+    .eq-edge {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 12px;
+        background: linear-gradient(to left, #991b1b 0%, #dc2626 8%, #dc2626 92%, #991b1b 100%);
+    }
+    .eq-front {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        padding: 16px 14px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 700;
+        color: white;
+        background: #e11d48;
+        will-change: transform;
+        transform: translateY(-4px);
+        transition: transform 600ms cubic-bezier(.3, .7, .4, 1);
+        text-align: center;
+        min-height: 55px;
+    }
+    .eq-pushable:hover .eq-front {
+        transform: translateY(-6px);
+        transition: transform 250ms cubic-bezier(.3, .7, .4, 1.5);
+    }
+    .eq-pushable:active .eq-front {
+        transform: translateY(-2px);
+        transition: transform 34ms;
+    }
+    .eq-pushable:hover .eq-shadow {
+        transform: translateY(4px);
+        transition: transform 250ms cubic-bezier(.3, .7, .4, 1.5);
+    }
+    .eq-pushable:active .eq-shadow {
+        transform: translateY(1px);
+        transition: transform 34ms;
+    }
+    .eq-sub {
+        font-size: 11px;
+        font-weight: 400;
+        opacity: 0.9;
+        margin-top: 4px;
+    }
+
+    #tugView { display: none; }
+    #buttonView { display: block; }
+
+    /* ── Multi-Tier Tabulator Grouped Header Theming ─────────── */
+    .tabulator .tabulator-header .tabulator-col.grp-hsd {
+        background: #fef3c7 !important;
+        border-bottom: 1px solid #fde68a !important;
+    }
+    .tabulator .tabulator-header .tabulator-col.grp-hsd .tabulator-col-title {
+        color: #92400e !important;
+        font-weight: 700 !important;
+    }
+
+    .tabulator .tabulator-header .tabulator-col.grp-fw {
+        background: #e0f2fe !important;
+        border-bottom: 1px solid #bae6fd !important;
+    }
+    .tabulator .tabulator-header .tabulator-col.grp-fw .tabulator-col-title {
+        color: #0369a1 !important;
+        font-weight: 700 !important;
+    }
+
+    .tabulator .tabulator-header .tabulator-col.grp-port {
+        background: #f3e8ff !important;
+        border-bottom: 1px solid #e9d5ff !important;
+    }
+    .tabulator .tabulator-header .tabulator-col.grp-port .tabulator-col-title {
+        color: #6b21a8 !important;
+        font-weight: 700 !important;
+    }
+
+    .tabulator .tabulator-header .tabulator-col.grp-stbd {
+        background: #ccfbf1 !important;
+        border-bottom: 1px solid #99f6e4 !important;
+    }
+    .tabulator .tabulator-header .tabulator-col.grp-stbd .tabulator-col-title {
+        color: #115e59 !important;
+        font-weight: 700 !important;
+    }
+
+    .tabulator .tabulator-header .tabulator-col.grp-shore {
+        background: #dcfce7 !important;
+        border-bottom: 1px solid #bbf7d0 !important;
+    }
+    .tabulator .tabulator-header .tabulator-col.grp-shore .tabulator-col-title {
+        color: #166534 !important;
+        font-weight: 700 !important;
+    }
+
+    /* Shaded Auto-calc columns */
+    .cell-autocalc {
+        background-color: #f8fafc !important;
+        font-weight: 700 !important;
+        color: #1e293b !important;
+    }
+    .dark-theme .cell-autocalc {
+        background-color: #1e293b !important;
+        color: #38bdf8 !important;
+    }
+
+    /* ── Header and Cell Text Wrapping ──────────────────────────── */
+    .tabulator .tabulator-header .tabulator-col {
+        height: auto !important;
+        min-height: 48px !important;
+    }
+    .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+        padding: 6px 4px !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+    }
+    .tabulator .tabulator-header .tabulator-col .tabulator-col-content .tabulator-col-title {
+        white-space: normal !important;
+        word-break: break-word !important;
+        text-align: center !important;
+        line-height: 1.25 !important;
+        font-size: 11.5px !important;
+    }
+    .tabulator .tabulator-header .tabulator-col-group {
+        height: auto !important;
+    }
+    .tabulator .tabulator-header .tabulator-col-group .tabulator-col-title {
+        white-space: normal !important;
+        word-break: break-word !important;
+        text-align: center !important;
+        line-height: 1.25 !important;
+    }
+    .tabulator .tabulator-cell {
+        white-space: normal !important;
+        word-break: break-word !important;
+        text-align: center;
+        padding: 4px 6px !important;
+        line-height: 1.3 !important;
+    }
+
+    .save-status {
+        font-size: 13px;
+        font-weight: 600;
+        color: #38a169;
+        margin-left: 12px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="module-header">
+    <h2>Tug Utilization</h2>
+    <span class="module-code">TGU01</span>
+    <span id="saveStatus" class="save-status"></span>
+</div>
+
+<!-- View 1: Pushable Tug Cards -->
+<div id="buttonView">
+    <div style="margin-bottom:12px;color:#64748b;font-size:13px;">Select a Tug to view and enter daily operational logs:</div>
+    <div class="tug-btn-grid" id="tugButtonGrid">
+        <p style="color:#888;">Loading tugs...</p>
+    </div>
+</div>
+
+<!-- View 2: Detailed Utilization Grid -->
+<div id="tugView">
+    <div class="toolbar">
+        <button class="btn" onclick="goBack()" style="background:#64748b;color:#fff;">&larr; Back to Tugs</button>
+        <span id="currentTugLabel" style="font-weight:700;font-size:14px;color:#1e3a5f;margin:0 12px;"></span>
+        {% if permissions.can_add %}<button class="btn btn-add" onclick="addRow()">+ Add Row</button>{% endif %}
+        {% if permissions.can_delete %}<button class="btn btn-delete" onclick="deleteSelected()">Delete Selected</button>{% endif %}
+        {% if permissions.can_add or permissions.can_edit %}<button class="btn btn-save" onclick="saveAll()">Save (Ctrl+S)</button>{% endif %}
+        {% if permissions.can_edit or permissions.can_add %}<button id="editModeBtn" class="btn" style="font-size:12px;padding:4px 12px;background:#805ad5;color:white;border:none;" onclick="toggleEditMode()">✏️ Edit</button>{% endif %}
+        <button class="btn" style="background:#1e7a45;color:#fff;border:none;" onclick="exportExcel()">⬇ Export Excel</button>
+        <div class="row-info" style="margin-left:auto;">Rows: <span id="rowCount">0</span> / <span id="totalCount">0</span></div>
+    </div>
+
+    <div id="unsavedBanner" style="display:none;background:#feebc8;border-left:4px solid #dd6b20;color:#7b341e;padding:8px 14px;font-size:12px;margin-bottom:8px;">
+        ⚠ You have unsaved changes &mdash; <button class="btn btn-save" onclick="saveAll()" style="margin:0;padding:2px 8px;font-size:11px;">Save Now</button>
+    </div>
+
+    <!-- Table Container -->
+    <div id="table"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    addToRecent('TGU01', 'Tug Utilization');
+
+    let table = null;
+    let currentTug = null;
+    let editMode = false;
+    let isDirty = false;
+    let dirtyRowIds = new Set();
+    let tugList = [];
+
+    const permissions = {{ permissions | tojson }};
+    const canEdit = permissions.can_edit || permissions.can_add;
+
+    document.addEventListener('DOMContentLoaded', async function() {
+        await loadTugs();
+    });
+
+    async function loadTugs() {
+        try {
+            const res = await fetch('/api/module/TGU01/tugs');
+            if (res.ok) {
+                tugList = await res.json();
+                renderTugButtons(tugList);
+            }
+        } catch (e) {
+            console.error('Failed to load tugs:', e);
+        }
+    }
+
+    function renderTugButtons(tugs) {
+        const grid = document.getElementById('tugButtonGrid');
+        grid.innerHTML = '';
+        if (!tugs || tugs.length === 0) {
+            grid.innerHTML = '<p style="color:#888;">No tugs found in Tug Master.</p>';
+            return;
+        }
+
+        tugs.forEach(t => {
+            const btn = document.createElement('button');
+            btn.className = 'eq-pushable';
+            btn.onclick = () => openTugTable(t.tug_name);
+            const sub = t.bhp ? `${t.bhp} BHP` : (t.tug_capacity ? `${t.tug_capacity}` : '');
+            btn.innerHTML = `
+                <span class="eq-shadow"></span>
+                <span class="eq-edge"></span>
+                <span class="eq-front">
+                    <span>${t.tug_name}</span>
+                    ${sub ? `<span class="eq-sub">${sub}</span>` : ''}
+                </span>
+            `;
+            grid.appendChild(btn);
+        });
+    }
+
+    function openTugTable(tugName) {
+        currentTug = tugName;
+        dirtyRowIds.clear();
+        isDirty = false;
+        document.getElementById('unsavedBanner').style.display = 'none';
+
+        document.getElementById('buttonView').style.display = 'none';
+        document.getElementById('tugView').style.display = 'block';
+        document.getElementById('currentTugLabel').textContent = `Tug: ${tugName}`;
+        initTable(tugName);
+    }
+
+    function goBack() {
+        if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) return;
+        currentTug = null;
+        if (table) { table.destroy(); table = null; }
+        document.getElementById('tugView').style.display = 'none';
+        document.getElementById('buttonView').style.display = 'block';
+    }
+
+    function toggleEditMode() {
+        editMode = !editMode;
+        const btn = document.getElementById('editModeBtn');
+        if (btn) {
+            btn.style.background = editMode ? '#38a169' : '#805ad5';
+            btn.textContent = editMode ? '✓ Editing' : '✏️ Edit';
+        }
+        if (table) table.redraw(true);
+    }
+
+    function markDirty(row) {
+        isDirty = true;
+        document.getElementById('unsavedBanner').style.display = 'block';
+        if (row && row.getData().id) {
+            dirtyRowIds.add(String(row.getData().id));
+        }
+    }
+
+    // Convert decimal or flexible input string to HH:MM (e.g. 17.5 -> "17:30", 21 -> "21:00", "5:30" -> "05:30")
+    function formatHhMm(val) {
+        if (val === null || val === undefined) return '';
+        const s = String(val).trim();
+        if (!s || s === '0' || s === '0.0' || s === '0.00' || s === '0:00' || s === '00:00') return '00:00';
+        
+        if (s.includes(':')) {
+            const parts = s.split(':');
+            const h = parseInt(parts[0], 10) || 0;
+            const m = parseInt(parts[1], 10) || 0;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        }
+        
+        const f = parseFloat(s);
+        if (isNaN(f)) return s;
+        const sign = f < 0 ? '-' : '';
+        const absF = Math.abs(f);
+        let h = Math.floor(absF);
+        let m = Math.round((absF - h) * 60);
+        if (m === 60) {
+            h += 1;
+            m = 0;
+        }
+        return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+
+    // Convert HH:MM or decimal string to float decimal hours for math
+    function parseHoursToDecimal(val) {
+        if (val === null || val === undefined) return 0;
+        const s = String(val).trim();
+        if (!s) return 0;
+        if (s.includes(':')) {
+            const parts = s.split(':');
+            const h = parseFloat(parts[0]) || 0;
+            const m = parseFloat(parts[1]) || 0;
+            return h >= 0 ? h + (m / 60) : h - (m / 60);
+        }
+        return parseFloat(s) || 0;
+    }
+
+    function onHoursCellEdited(cell) {
+        const val = cell.getValue();
+        const formatted = formatHhMm(val);
+        if (val !== formatted) {
+            cell.setValue(formatted, true);
+        }
+        recalculateRow(cell.getRow());
+    }
+
+    function recalculateRow(row) {
+        const d = row.getData();
+        const num = (v) => parseFloat(v) || 0;
+
+        // 1. HSD Running Hours (HH:MM)
+        const meHrs = parseHoursToDecimal(d.hsd_me_hours);
+        const dgHrs = parseHoursToDecimal(d.hsd_dg_hours);
+        const totalHrs = formatHhMm(meHrs + dgHrs);
+
+        // 2. HSD Total Consumption (LTR)
+        const meCons = num(d.hsd_me_consumption);
+        const dgCons = num(d.hsd_dg_consumption);
+        const totalCons = (meCons + dgCons).toFixed(2);
+
+        // 3. HSD Closing ROB (LTR)
+        const openRobHsd = num(d.hsd_opening_rob);
+        const dieselRecd = num(d.hsd_received);
+        const closingRobHsd = (openRobHsd + dieselRecd - parseFloat(totalCons)).toFixed(2);
+
+        // 4. FW Closing ROB (MT)
+        const openRobFw = num(d.fw_opening_rob);
+        const fwRecd = num(d.fw_received);
+        const fwCons = num(d.fw_consumption);
+        const closingRobFw = (openRobFw + fwRecd - fwCons).toFixed(2);
+
+        // 5. Port Engine Difference (HH:MM)
+        const portInit = parseHoursToDecimal(d.port_initial);
+        const portFin = parseHoursToDecimal(d.port_final);
+        const portDiff = formatHhMm(portFin >= portInit ? portFin - portInit : 0);
+
+        // 6. Stbd Engine Difference (HH:MM)
+        const stbdInit = parseHoursToDecimal(d.stbd_initial);
+        const stbdFin = parseHoursToDecimal(d.stbd_final);
+        const stbdDiff = formatHhMm(stbdFin >= stbdInit ? stbdFin - stbdInit : 0);
+
+        row.update({
+            hsd_total_hours: totalHrs,
+            hsd_total_consumption: totalCons,
+            hsd_closing_rob: closingRobHsd,
+            fw_closing_rob: closingRobFw,
+            port_diff: portDiff,
+            stbd_diff: stbdDiff
+        });
+        markDirty(row);
+    }
+
+    function initTable(tugName) {
+        const numEditor = canEdit ? "input" : false;
+
+        table = new Tabulator("#table", {
+            height: "calc(100vh - 160px)",
+            layout: "fitDataFill",
+            headerWordWrap: true,
+            pagination: true,
+            paginationMode: "remote",
+            paginationSize: 20,
+            paginationSizeSelector: [20, 50, 75, 100, true],
+            ajaxURL: "/api/module/TGU01/records",
+            ajaxParams: function() { return { tug: currentTug }; },
+            ajaxResponse: function(url, params, response) {
+                const data = response.data || [];
+                const total = response.total !== undefined ? response.total : data.length;
+                document.getElementById('rowCount').textContent = data.length;
+                document.getElementById('totalCount').textContent = total;
+                if (!response.last_page) {
+                    const size = (table && table.getPageSize && table.getPageSize()) ? table.getPageSize() : 20;
+                    response.last_page = Math.max(1, Math.ceil(total / (typeof size === 'number' ? size : total || 1)));
+                }
+                return response;
+            },
+            selectable: true,
+            rowFormatter: function(row) {
+                const data = row.getData();
+                const el = row.getElement();
+                if (!data.id) {
+                    el.style.backgroundColor = '#fffff0'; // Unsaved new row
+                } else if (editMode && row.isSelected()) {
+                    el.style.backgroundColor = '#ebf8ff';
+                }
+            },
+            columns: [
+                {formatter: "rowSelection", titleFormatter: "rowSelection", hozAlign: "center", headerSort: false, width: 40, frozen: true},
+                {title: "Date", field: "entry_date", width: 105, frozen: true, editor: canEdit ? "input" : false, cellEdited: (cell) => markDirty(cell.getRow())},
+                
+                // Group 1: HSD FUEL
+                {
+                    title: "HSD (High Speed Diesel) [LTR]",
+                    cssClass: "grp-hsd",
+                    columns: [
+                        {title: "Pre. Day ROB<br>(LTR)", field: "hsd_opening_rob", width: 110, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "Diesel Recd<br>(LTR)", field: "hsd_received", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "M/E Running<br>(HH:MM)", field: "hsd_me_hours", width: 110, editor: numEditor, formatter: (cell) => formatHhMm(cell.getValue()), cellEdited: (cell) => onHoursCellEdited(cell)},
+                        {title: "DG Running<br>(HH:MM)", field: "hsd_dg_hours", width: 110, editor: numEditor, formatter: (cell) => formatHhMm(cell.getValue()), cellEdited: (cell) => onHoursCellEdited(cell)},
+                        {title: "M/E Cons<br>(LTR)", field: "hsd_me_consumption", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "DG Cons<br>(LTR)", field: "hsd_dg_consumption", width: 100, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "Total Hours<br>(HH:MM)", field: "hsd_total_hours", width: 110, cssClass: "cell-autocalc", formatter: (cell) => formatHhMm(cell.getValue()), editor: false},
+                        {title: "Total Cons<br>(LTR)", field: "hsd_total_consumption", width: 105, cssClass: "cell-autocalc", editor: false},
+                        {title: "Today ROB<br>(LTR)", field: "hsd_closing_rob", width: 110, cssClass: "cell-autocalc", editor: false}
+                    ]
+                },
+
+                // Group 2: FRESH WATER
+                {
+                    title: "FRESH WATER [MT]",
+                    cssClass: "grp-fw",
+                    columns: [
+                        {title: "Pre. Day ROB<br>(MT)", field: "fw_opening_rob", width: 115, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "FW Recd<br>(MT)", field: "fw_received", width: 100, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "FW Cons<br>(MT)", field: "fw_consumption", width: 100, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "Today ROB<br>(MT)", field: "fw_closing_rob", width: 110, cssClass: "cell-autocalc", editor: false}
+                    ]
+                },
+
+                // Group 3: PORT ENGINE
+                {
+                    title: "PORT ENGINE [HRS]",
+                    cssClass: "grp-port",
+                    columns: [
+                        {title: "Initial<br>Reading", field: "port_initial", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "Final<br>Reading", field: "port_final", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())}
+                    ]
+                },
+
+                // Group 4: STBD ENGINE
+                {
+                    title: "STBD. ENGINE [HRS]",
+                    cssClass: "grp-stbd",
+                    columns: [
+                        {title: "Initial<br>Reading", field: "stbd_initial", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())},
+                        {title: "Final<br>Reading", field: "stbd_final", width: 105, editor: numEditor, cellEdited: (cell) => recalculateRow(cell.getRow())}
+                    ]
+                },
+
+                // Group 5: DIFFERENCES & SHORE POWER
+                {
+                    title: "DIFFERENCES & SHORE POWER",
+                    cssClass: "grp-shore",
+                    columns: [
+                        {title: "Port Diff<br>(HH:MM)", field: "port_diff", width: 110, cssClass: "cell-autocalc", formatter: (cell) => formatHhMm(cell.getValue()), editor: false},
+                        {title: "Stbd Diff<br>(HH:MM)", field: "stbd_diff", width: 110, cssClass: "cell-autocalc", formatter: (cell) => formatHhMm(cell.getValue()), editor: false},
+                        {title: "Shore Power<br>(HH:MM)", field: "shore_power_hours", width: 115, editor: numEditor, formatter: (cell) => formatHhMm(cell.getValue()), cellEdited: (cell) => onHoursCellEdited(cell)}
+                    ]
+                },
+
+                {title: "Remarks", field: "remarks", width: 140, editor: canEdit ? "input" : false, cellEdited: (cell) => markDirty(cell.getRow())},
+                {title: "Created By", field: "created_by", width: 105, editor: false}
+            ]
+        });
+    }
+
+    async function addRow() {
+        if (!currentTug) return;
+        const today = new Date().toISOString().slice(0, 10);
+        
+        let prevRob = { hsd_closing_rob: '0', fw_closing_rob: '0', port_final: '0', stbd_final: '0' };
+        try {
+            const res = await fetch(`/api/module/TGU01/latest_rob?tug=${encodeURIComponent(currentTug)}`);
+            if (res.ok) prevRob = await res.json();
+        } catch (e) {
+            console.error('Error fetching latest ROB:', e);
+        }
+
+        table.addRow({
+            tug_name: currentTug,
+            entry_date: today,
+            hsd_opening_rob: prevRob.hsd_closing_rob || '0',
+            hsd_received: '0',
+            hsd_me_hours: '00:00',
+            hsd_dg_hours: '00:00',
+            hsd_me_consumption: '0',
+            hsd_dg_consumption: '0',
+            hsd_total_hours: '00:00',
+            hsd_total_consumption: '0',
+            hsd_closing_rob: prevRob.hsd_closing_rob || '0',
+            fw_opening_rob: prevRob.fw_closing_rob || '0',
+            fw_received: '0',
+            fw_consumption: '0',
+            fw_closing_rob: prevRob.fw_closing_rob || '0',
+            port_initial: prevRob.port_final || '0',
+            port_final: prevRob.port_final || '0',
+            port_diff: '00:00',
+            stbd_initial: prevRob.stbd_final || '0',
+            stbd_final: prevRob.stbd_final || '0',
+            stbd_diff: '00:00',
+            shore_power_hours: '00:00',
+            remarks: '',
+            created_by: '{{ session.get("username", "admin") }}'
+        }, true);
+
+        markDirty();
+        const curRows = table.getData().length;
+        const totalEl = document.getElementById('totalCount');
+        const total = Math.max(curRows, (parseInt(totalEl.textContent) || 0) + 1);
+        document.getElementById('rowCount').textContent = curRows;
+        document.getElementById('totalCount').textContent = total;
+    }
+
+    async function saveAll() {
+        if (!table || !currentTug) return;
+        const rows = table.getRows();
+        let savedCount = 0;
+
+        for (const row of rows) {
+            const data = row.getData();
+            if (!data.entry_date) continue;
+            data.tug_name = currentTug;
+
+            try {
+                const res = await fetch('/api/module/TGU01/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const resData = await res.json();
+                if (resData.success) {
+                    row.update({ id: resData.id });
+                    savedCount++;
+                }
+            } catch (e) {
+                console.error('Save error:', e);
+            }
+        }
+
+        isDirty = false;
+        dirtyRowIds.clear();
+        document.getElementById('unsavedBanner').style.display = 'none';
+        const st = document.getElementById('saveStatus');
+        st.textContent = `✓ ${savedCount} row(s) saved successfully!`;
+        setTimeout(() => { st.textContent = ''; }, 3000);
+        table.setData();
+    }
+
+    async function deleteSelected() {
+        const selected = table.getSelectedRows();
+        if (selected.length === 0) { alert('Select rows to delete.'); return; }
+        if (!confirm(`Delete ${selected.length} row(s)?`)) return;
+
+        for (const row of selected) {
+            const data = row.getData();
+            if (data.id) {
+                await fetch('/api/module/TGU01/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id: data.id })
+                });
+            }
+            row.delete();
+        }
+        table.setData();
+    }
+
+    function exportExcel() {
+        if (!currentTug) return;
+        window.location.href = `/api/module/TGU01/export?tug=${encodeURIComponent(currentTug)}`;
+    }
+</script>
+{% endblock %}
+
