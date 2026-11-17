@@ -591,6 +591,7 @@ async function loadAvailableDocs() {
     let customerList = [];
     let equipmentList = [];
     let tugList = [];
+    let activityList = [];
     let subTables = {};
     let currentMbcId = null;
     let currentBlQty = null;
@@ -700,7 +701,7 @@ async function loadAvailableDocs() {
 
     async function loadMasterData() {
         await loadAvailableDocs();
-        const [dsRes, mbcRes, otRes, ctRes, cnRes, uomRes, berthRes, pplRes, custRes, equipRes, tugRes, configRes, portRes] = await Promise.all([
+        const [dsRes, mbcRes, otRes, ctRes, cnRes, uomRes, berthRes, pplRes, custRes, equipRes, tugRes, configRes, portRes, actRes] = await Promise.all([
             fetch('/api/module/MBCDS01/all'),
             fetch('/api/module/MBCM01/all'),
             fetch('/api/module/LUEU01/operation-types'),
@@ -714,6 +715,7 @@ async function loadAvailableDocs() {
             fetch('/api/module/TGM01/all'),
             fetch('/admin/api/config/MBCT01'),
             fetch('/api/module/VPM01/all'),
+            fetch('/api/module/TGA01/all'),
         ]);
         const dsData = await dsRes.json();
         docSeriesList = dsData.map(d => d.name);
@@ -741,6 +743,7 @@ async function loadAvailableDocs() {
         customerList = await custRes.json();
         equipmentList = await equipRes.json();
         tugList = await tugRes.json();
+        activityList = await actRes.json();
         moduleConfig = await configRes.json();
         portList = await portRes.json();
         initFilterConfig();
@@ -1187,6 +1190,9 @@ async function loadAvailableDocs() {
         const customerOptions = {};
         customerList.forEach(c => { customerOptions[c] = c; });
 
+        const activityOptions = {};
+        activityList.forEach(a => { activityOptions[a] = a; });
+
         const dtFmt = datetimeCellFormatter;
         const delBtn = function(type) {
             return canDelete ? {title: "", field: "actions", formatter: deleteButtonFormatter, width: 50, hozAlign: "center", headerSort: false,
@@ -1339,7 +1345,7 @@ async function loadAvailableDocs() {
                     headerSort: false,
                     editable: canEdit,
                     editor: canEdit ? "list" : false,
-                    editorParams: {values: ['Berthing', 'Shifting', 'Unberthing', 'Other']},
+                    editorParams: {values: activityOptions, autocomplete: true, clearable: true},
                     headerHozAlign: "center",
                     hozAlign: "left",
                     cssClass: "activity-header-col",
@@ -1652,7 +1658,7 @@ async function loadAvailableDocs() {
                 loadTugActivity(mbcId, data);
             },
             columns: [
-                {title: "Activity", field: "activity_id", width: 100, editor: canEdit ? "list" : false, editorParams: {values: ['Berthing', 'Shifting', 'Unberthing']}},
+                {title: "Activity", field: "activity_id", width: 110, editor: canEdit ? "list" : false, editorParams: {values: activityOptions, autocomplete: true, clearable: true}},
                 {title: "Tug Utilised", field: "tugs", width: 150, editor: tugMultiEditor, formatter: multiBadgeFormatter('#3182ce')},
                 {title: "First Line Ashore / Cast Off", field: "first_line_ashore_cast_off", width: 180, editor: canEdit ? datetimeEditor : false, formatter: dtFmt},
                 {title: "All Made Fast / Cast Off", field: "all_made_fast_cast_off", width: 180, editor: canEdit ? datetimeEditor : false, formatter: dtFmt},
