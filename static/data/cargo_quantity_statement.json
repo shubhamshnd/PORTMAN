@@ -9565,8 +9565,8 @@
       {
         "index": 23,
         "col_letter": "W",
-        "key": "ggbs_loading",
-        "label": "GGBS Loading",
+        "key": "mgp_loading",
+        "label": "MGP (Pig Iron) Loading",
         "group": null,
         "is_subtotal": false
       },
@@ -9651,14 +9651,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 2055152,
         "double_handling": 0,
-        "grand_total": 2055152
+        "grand_total": 2055152,
+        "mgp_loading": 0
       },
       {
         "month": "May-26",
@@ -9683,14 +9683,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 2220765,
         "double_handling": 0,
-        "grand_total": 2220765
+        "grand_total": 2220765,
+        "mgp_loading": 0
       },
       {
         "month": "Jun-26",
@@ -9715,14 +9715,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 2146054,
         "double_handling": 0,
-        "grand_total": 2146054
+        "grand_total": 2146054,
+        "mgp_loading": 0
       },
       {
         "month": "Jul-26",
@@ -9747,14 +9747,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Aug-26",
@@ -9779,14 +9779,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Sep-26",
@@ -9811,14 +9811,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Oct-26",
@@ -9843,14 +9843,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Nov-26",
@@ -9875,14 +9875,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Dec-26",
@@ -9907,14 +9907,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Jan-27",
@@ -9939,14 +9939,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Feb-27",
@@ -9971,14 +9971,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       },
       {
         "month": "Mar-27",
@@ -10003,14 +10003,14 @@
         "tmt_bar_loading": 0,
         "hrc_loading": 0,
         "salav_lumps": 0,
-        "ggbs_loading": 0,
         "gbfs_loading": 0,
         "harsco_slag_loading": 0,
         "ammonium_sulphate": 0,
         "lumps_loading": 0,
         "sub_total": 0,
         "double_handling": 0,
-        "grand_total": 0
+        "grand_total": 0,
+        "mgp_loading": 0
       }
     ],
     "totals": {
