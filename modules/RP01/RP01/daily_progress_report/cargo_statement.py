@@ -86,6 +86,8 @@ def map_cargo_to_column_key(cargo_type, cargo_category, cargo_name):
         return 'mop'
     if 'SALAV' in cn and 'LUMP' in cn:
         return 'salav_lumps'
+    if 'HMGP' in cn or 'HMGP' in cc or 'MGP' in cn or 'PIG IRON' in cn:
+        return 'mgp_loading'
 
     return None
 
