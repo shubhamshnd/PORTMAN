@@ -14,11 +14,14 @@ Status lifecycle:  pending -> processing -> sent
                                              bookkeeping failed; manual fix)
 """
 import json
+import logging
 import threading
 from datetime import datetime, timedelta
 
 from database import get_db, get_cursor
 import sap_client
+
+log = logging.getLogger(__name__)
 
 MAX_RETRIES = 10  # ponytail: legacy column value only; the worker ignores it
 RETRY_INTERVAL_MIN = 5
@@ -112,12 +115,38 @@ def _already_in_sap(row):
     return (r and (r['sap_document_number'] or '').strip()) or None
 
 
+def _payload(row):
+    """Payload to send. A 'post' is rebuilt from the invoice as it is now, so a job
+    queued before a builder fix (e.g. TCS sign, 904ec7f) can't keep resending a
+    stale Invoice_Amount; the refreshed payload is saved for the FSAP01 view.
+    Falls back to the saved payload if the rebuild fails."""
+    saved = json.loads(row['payload'])
+    if row['job_type'] != 'post' or not row.get('invoice_id'):
+        return saved
+    try:
+        import sap_builder
+        from modules.FIN01 import model
+        payload = sap_builder.build_invoice_payload(
+            model.get_invoice_by_id(row['invoice_id']), model.get_invoice_lines(row['invoice_id']))
+    except Exception:
+        log.exception('SAP queue %s: payload rebuild failed, sending saved payload', row['id'])
+        return saved
+    if payload != saved:
+        conn = get_db()
+        cur = get_cursor(conn)
+        cur.execute("UPDATE sap_outbound_queue SET payload=%s WHERE id=%s",
+                    [json.dumps(payload), row['id']])
+        conn.commit()
+        conn.close()
+    return payload
+
+
 def _attempt(row):
     sap_doc = _already_in_sap(row)
     if sap_doc:
         _mark_sent(row, sap_doc)
         return
-    payload = json.loads(row['payload'])
+    payload = _payload(row)
     result = sap_client.post_invoice_to_sap(
         payload, row['reference_type'], row['reference_id'] or 0,
         row['reference_number'], row['created_by'])
@@ -178,7 +207,7 @@ def manual_send(queue_id):
     if sap_doc:
         _mark_sent(row, sap_doc)
         return {'ok': True, 'sap_document_number': sap_doc}
-    payload = json.loads(row['payload'])
+    payload = _payload(row)
     result = sap_client.post_invoice_to_sap(
         payload, row['reference_type'], row['reference_id'] or 0,
         row['reference_number'], row['created_by'])
