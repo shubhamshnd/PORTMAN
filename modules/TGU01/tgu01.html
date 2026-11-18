@@ -324,7 +324,8 @@
     function formatHhMm(val) {
         if (val === null || val === undefined) return '';
         const s = String(val).trim();
-        if (!s || s === '0' || s === '0.0' || s === '0.00' || s === '0:00' || s === '00:00') return '00:00';
+        if (!s) return '';
+        if (s === '0' || s === '0.0' || s === '0.00' || s === '0:00' || s === '00:00') return '00:00';
         
         if (s.includes(':')) {
             const parts = s.split(':');
@@ -362,6 +363,11 @@
 
     function onHoursCellEdited(cell) {
         const val = cell.getValue();
+        if (val === null || val === undefined || String(val).trim() === '') {
+            cell.setValue('', true);
+            recalculateRow(cell.getRow());
+            return;
+        }
         const formatted = formatHhMm(val);
         if (val !== formatted) {
             cell.setValue(formatted, true);
@@ -369,40 +375,125 @@
         recalculateRow(cell.getRow());
     }
 
+    function parseValidDateTime(value) {
+        if (!value) return null;
+        if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+        const str = String(value).trim();
+        if (!str) return null;
+
+        let day, month, year, hour = 0, minute = 0;
+        let match = str.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+        if (match) {
+            day = Number(match[1]);
+            month = Number(match[2]);
+            year = Number(match[3]);
+            if (match[4] !== undefined) hour = Number(match[4]);
+            if (match[5] !== undefined) minute = Number(match[5]);
+        } else {
+            match = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+            if (!match) return null;
+            year = Number(match[1]);
+            month = Number(match[2]);
+            day = Number(match[3]);
+            if (match[4] !== undefined) hour = Number(match[4]);
+            if (match[5] !== undefined) minute = Number(match[5]);
+        }
+
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+        const date = new Date(year, month - 1, day, hour, minute);
+        if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) {
+            return null;
+        }
+        return date;
+    }
+
+    function validateDateTimeFormat(cell) {
+        const value = cell.getValue();
+        if (!value) return true;
+        if (!parseValidDateTime(value)) {
+            alert('Invalid date/time.\n\nPlease enter a valid date and time (e.g., DD-MM-YYYY HH:mm).');
+            cell.setValue(cell.getOldValue(), true);
+            return false;
+        }
+        return true;
+    }
+
+    const tguDatetimeEditor = function(cell, onRendered, success, cancel) {
+        let val = cell.getValue();
+        if (val) {
+            let s = String(val).trim().replace(' IST', '');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                val = s + 'T00:00';
+            } else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+                const p = s.split('-');
+                val = `${p[2]}-${p[1]}-${p[0]}T00:00`;
+            } else if (/^\d{2}-\d{2}-\d{4}\s+(\d{2}):(\d{2})/.test(s)) {
+                const m = s.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})/);
+                val = `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}`;
+            }
+        }
+        const cellProxy = Object.create(cell);
+        cellProxy.getValue = () => val;
+        return datetimeEditor(cellProxy, onRendered, success, cancel);
+    };
+
+    function tguDatetimeCellFormatter(cell) {
+        let val = cell.getValue();
+        if (!val) return '';
+        let s = String(val).trim();
+        if (s.includes('IST')) return s;
+        if (!s.includes(':')) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                s += 'T00:00';
+            } else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+                const p = s.split('-');
+                s = `${p[2]}-${p[1]}-${p[0]}T00:00`;
+            }
+        }
+        return formatDateTime(s);
+    }
+
     function recalculateRow(row) {
         const d = row.getData();
-        const num = (v) => parseFloat(v) || 0;
+        const hasVal = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+        const num = (v) => hasVal(v) ? (parseFloat(v) || 0) : 0;
 
         // 1. HSD Running Hours (HH:MM)
+        const anyHours = hasVal(d.hsd_me_hours) || hasVal(d.hsd_dg_hours);
         const meHrs = parseHoursToDecimal(d.hsd_me_hours);
         const dgHrs = parseHoursToDecimal(d.hsd_dg_hours);
-        const totalHrs = formatHhMm(meHrs + dgHrs);
+        const totalHrs = anyHours ? formatHhMm(meHrs + dgHrs) : '';
 
         // 2. HSD Total Consumption (LTR)
+        const anyCons = hasVal(d.hsd_me_consumption) || hasVal(d.hsd_dg_consumption);
         const meCons = num(d.hsd_me_consumption);
         const dgCons = num(d.hsd_dg_consumption);
-        const totalCons = (meCons + dgCons).toFixed(2);
+        const totalCons = anyCons ? (meCons + dgCons).toFixed(2) : '';
 
         // 3. HSD Closing ROB (LTR)
+        const anyHsdRob = hasVal(d.hsd_opening_rob) || hasVal(d.hsd_received) || anyCons;
         const openRobHsd = num(d.hsd_opening_rob);
         const dieselRecd = num(d.hsd_received);
-        const closingRobHsd = (openRobHsd + dieselRecd - parseFloat(totalCons)).toFixed(2);
+        const closingRobHsd = anyHsdRob ? (openRobHsd + dieselRecd - (parseFloat(totalCons) || 0)).toFixed(2) : '';
 
         // 4. FW Closing ROB (MT)
+        const anyFwRob = hasVal(d.fw_opening_rob) || hasVal(d.fw_received) || hasVal(d.fw_consumption);
         const openRobFw = num(d.fw_opening_rob);
         const fwRecd = num(d.fw_received);
         const fwCons = num(d.fw_consumption);
-        const closingRobFw = (openRobFw + fwRecd - fwCons).toFixed(2);
+        const closingRobFw = anyFwRob ? (openRobFw + fwRecd - fwCons).toFixed(2) : '';
 
         // 5. Port Engine Difference (HH:MM)
+        const anyPort = hasVal(d.port_initial) || hasVal(d.port_final);
         const portInit = parseHoursToDecimal(d.port_initial);
         const portFin = parseHoursToDecimal(d.port_final);
-        const portDiff = formatHhMm(portFin >= portInit ? portFin - portInit : 0);
+        const portDiff = anyPort ? formatHhMm(portFin >= portInit ? portFin - portInit : 0) : '';
 
         // 6. Stbd Engine Difference (HH:MM)
+        const anyStbd = hasVal(d.stbd_initial) || hasVal(d.stbd_final);
         const stbdInit = parseHoursToDecimal(d.stbd_initial);
         const stbdFin = parseHoursToDecimal(d.stbd_final);
-        const stbdDiff = formatHhMm(stbdFin >= stbdInit ? stbdFin - stbdInit : 0);
+        const stbdDiff = anyStbd ? formatHhMm(stbdFin >= stbdInit ? stbdFin - stbdInit : 0) : '';
 
         row.update({
             hsd_total_hours: totalHrs,
@@ -451,7 +542,10 @@
             },
             columns: [
                 {formatter: "rowSelection", titleFormatter: "rowSelection", hozAlign: "center", headerSort: false, width: 40, frozen: true},
-                {title: "Date", field: "entry_date", width: 105, frozen: true, editor: canEdit ? "input" : false, cellEdited: (cell) => markDirty(cell.getRow())},
+                {title: "Date", field: "entry_date", width: 160, frozen: true, editor: canEdit ? tguDatetimeEditor : false, formatter: tguDatetimeCellFormatter, cellEdited: (cell) => {
+                    if (!validateDateTimeFormat(cell)) return;
+                    markDirty(cell.getRow());
+                }},
                 
                 // Group 1: HSD FUEL
                 {
@@ -521,39 +615,30 @@
 
     async function addRow() {
         if (!currentTug) return;
-        const today = new Date().toISOString().slice(0, 10);
-        
-        let prevRob = { hsd_closing_rob: '0', fw_closing_rob: '0', port_final: '0', stbd_final: '0' };
-        try {
-            const res = await fetch(`/api/module/TGU01/latest_rob?tug=${encodeURIComponent(currentTug)}`);
-            if (res.ok) prevRob = await res.json();
-        } catch (e) {
-            console.error('Error fetching latest ROB:', e);
-        }
 
         table.addRow({
             tug_name: currentTug,
-            entry_date: today,
-            hsd_opening_rob: prevRob.hsd_closing_rob || '0',
-            hsd_received: '0',
-            hsd_me_hours: '00:00',
-            hsd_dg_hours: '00:00',
-            hsd_me_consumption: '0',
-            hsd_dg_consumption: '0',
-            hsd_total_hours: '00:00',
-            hsd_total_consumption: '0',
-            hsd_closing_rob: prevRob.hsd_closing_rob || '0',
-            fw_opening_rob: prevRob.fw_closing_rob || '0',
-            fw_received: '0',
-            fw_consumption: '0',
-            fw_closing_rob: prevRob.fw_closing_rob || '0',
-            port_initial: prevRob.port_final || '0',
-            port_final: prevRob.port_final || '0',
-            port_diff: '00:00',
-            stbd_initial: prevRob.stbd_final || '0',
-            stbd_final: prevRob.stbd_final || '0',
-            stbd_diff: '00:00',
-            shore_power_hours: '00:00',
+            entry_date: '',
+            hsd_opening_rob: '',
+            hsd_received: '',
+            hsd_me_hours: '',
+            hsd_dg_hours: '',
+            hsd_me_consumption: '',
+            hsd_dg_consumption: '',
+            hsd_total_hours: '',
+            hsd_total_consumption: '',
+            hsd_closing_rob: '',
+            fw_opening_rob: '',
+            fw_received: '',
+            fw_consumption: '',
+            fw_closing_rob: '',
+            port_initial: '',
+            port_final: '',
+            port_diff: '',
+            stbd_initial: '',
+            stbd_final: '',
+            stbd_diff: '',
+            shore_power_hours: '',
             remarks: '',
             created_by: '{{ session.get("username", "admin") }}'
         }, true);
@@ -569,12 +654,105 @@
     async function saveAll() {
         if (!table || !currentTug) return;
         const rows = table.getRows();
-        let savedCount = 0;
 
+        // 1. Identify rows to save (only new or modified rows)
+        const rowsToSave = [];
         for (const row of rows) {
             const data = row.getData();
-            if (!data.entry_date) continue;
+            const isNew = !data.id;
+            const isDirtyRow = isNew || dirtyRowIds.has(String(data.id));
+            if (!isDirtyRow) continue;
+
+            // Date validation: Tug utilization requires a Date for every row being saved
+            if (!data.entry_date || !String(data.entry_date).trim()) {
+                alert('Please enter a Date before saving.');
+                return;
+            }
+            rowsToSave.push(row);
+        }
+
+        if (rowsToSave.length === 0) {
+            return;
+        }
+
+        // Fetch latest ROB to populate opening balances if left empty on new rows
+        let prevRob = null;
+        try {
+            const res = await fetch(`/api/module/TGU01/latest_rob?tug=${encodeURIComponent(currentTug)}`);
+            if (res.ok) prevRob = await res.json();
+        } catch (e) {
+            console.error('Error fetching latest ROB:', e);
+        }
+
+        const num = (v) => (v !== null && v !== undefined && String(v).trim() !== '') ? (parseFloat(v) || 0) : 0;
+        let savedCount = 0;
+
+        for (const row of rowsToSave) {
+            const data = row.getData();
             data.tug_name = currentTug;
+
+            // Convert DD-MM-YYYY or DD-MM-YYYY HH:MM to storage format (YYYY-MM-DD or YYYY-MM-DDTHH:MM)
+            if (data.entry_date) {
+                const s = String(data.entry_date).trim().replace(' IST', '');
+                const m = s.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT]+(\d{2}):(\d{2}))?/);
+                if (m) {
+                    const timePart = (m[4] && m[5]) ? `T${m[4]}:${m[5]}` : '';
+                    data.entry_date = `${m[3]}-${m[2]}-${m[1]}${timePart}`;
+                }
+            }
+
+            // If it's a new row and opening balances / initial readings are empty, populate them from previous day
+            if (!data.id && prevRob) {
+                if (data.hsd_opening_rob === '' || data.hsd_opening_rob === null || data.hsd_opening_rob === undefined) {
+                    data.hsd_opening_rob = prevRob.hsd_closing_rob || '0';
+                }
+                if (data.fw_opening_rob === '' || data.fw_opening_rob === null || data.fw_opening_rob === undefined) {
+                    data.fw_opening_rob = prevRob.fw_closing_rob || '0';
+                }
+                if (data.port_initial === '' || data.port_initial === null || data.port_initial === undefined) {
+                    data.port_initial = prevRob.port_final || '0';
+                }
+                if (data.stbd_initial === '' || data.stbd_initial === null || data.stbd_initial === undefined) {
+                    data.stbd_initial = prevRob.stbd_final || '0';
+                }
+            }
+
+            // Fill default zeroes for empty numeric fields upon save so calculations and DB are consistent
+            if (!data.hsd_received) data.hsd_received = '0';
+            if (!data.hsd_me_consumption) data.hsd_me_consumption = '0';
+            if (!data.hsd_dg_consumption) data.hsd_dg_consumption = '0';
+            if (!data.fw_received) data.fw_received = '0';
+            if (!data.fw_consumption) data.fw_consumption = '0';
+            if (!data.port_final) data.port_final = data.port_initial || '0';
+            if (!data.stbd_final) data.stbd_final = data.stbd_initial || '0';
+            if (!data.shore_power_hours) data.shore_power_hours = '00:00';
+
+            // Calculate totals
+            const meHrs = parseHoursToDecimal(data.hsd_me_hours);
+            const dgHrs = parseHoursToDecimal(data.hsd_dg_hours);
+            data.hsd_total_hours = formatHhMm(meHrs + dgHrs);
+
+            const meCons = num(data.hsd_me_consumption);
+            const dgCons = num(data.hsd_dg_consumption);
+            const totalCons = (meCons + dgCons).toFixed(2);
+            data.hsd_total_consumption = totalCons;
+
+            const openRobHsd = num(data.hsd_opening_rob);
+            const dieselRecd = num(data.hsd_received);
+            data.hsd_closing_rob = (openRobHsd + dieselRecd - parseFloat(totalCons)).toFixed(2);
+
+            const openRobFw = num(data.fw_opening_rob);
+            const fwRecd = num(data.fw_received);
+            const fwCons = num(data.fw_consumption);
+            data.fw_closing_rob = (openRobFw + fwRecd - fwCons).toFixed(2);
+
+            const portInit = parseHoursToDecimal(data.port_initial);
+            const portFin = parseHoursToDecimal(data.port_final);
+            data.port_diff = formatHhMm(portFin >= portInit ? portFin - portInit : 0);
+
+            const stbdInit = parseHoursToDecimal(data.stbd_initial);
+            const stbdFin = parseHoursToDecimal(data.stbd_final);
+            data.stbd_diff = formatHhMm(stbdFin >= stbdInit ? stbdFin - stbdInit : 0);
 
             try {
                 const res = await fetch('/api/module/TGU01/save', {
@@ -586,6 +764,9 @@
                 if (resData.success) {
                     row.update({ id: resData.id });
                     savedCount++;
+                } else if (resData.error) {
+                    alert(`Error saving row: ${resData.error}`);
+                    return;
                 }
             } catch (e) {
                 console.error('Save error:', e);
@@ -596,9 +777,11 @@
         dirtyRowIds.clear();
         document.getElementById('unsavedBanner').style.display = 'none';
         const st = document.getElementById('saveStatus');
-        st.textContent = `✓ ${savedCount} row(s) saved successfully!`;
-        setTimeout(() => { st.textContent = ''; }, 3000);
-        table.setData();
+        if (st) {
+            st.textContent = `✓ ${savedCount} row(s) saved successfully!`;
+            setTimeout(() => { st.textContent = ''; }, 3000);
+        }
+        await table.setData();
     }
 
     async function deleteSelected() {
