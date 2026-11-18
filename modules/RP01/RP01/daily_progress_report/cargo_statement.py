@@ -4,110 +4,83 @@ from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 
-def map_cargo_to_column_key(cargo_type, cargo_category, cargo_name):
+def match_category_to_column(cargo_category, cargo_type, columns):
     """
-    Map vessel_cargo cargo_type and cargo_category (along with cargo_name)
-    to the corresponding Cargo Quantity Statement column key.
+    Dynamically find the column key for a given cargo_category and cargo_type
+    by matching directly against the table's column labels and group headers.
+    No hardcoded mapping dictionary is used.
     """
-    ct = (cargo_type or '').strip().upper()
-    cc = (cargo_category or '').strip().upper()
-    cn = (cargo_name or '').strip().upper()
+    if not cargo_category:
+        return None
 
-    # IBRM
-    if ct == 'IBRM':
-        if 'PELLET FEED' in cn or 'FINE' in cc or 'FINE' in cn:
-            return 'ore_fines'
-        elif 'CLO' in cc or 'LUMP' in cc or 'LUMP' in cn:
-            return 'lumps'
-        elif 'PELLET' in cc or 'PELLET' in cn:
-            return 'pellets'
-        elif 'HBI' in cc or 'HBI' in cn:
-            return 'hbi'
-        elif 'SCRAP' in cc or 'SCRAP' in cn:
-            return 'scrap'
-        return 'ore_fines'
+    cat = cargo_category.strip().upper()
+    grp = (cargo_type or '').strip().upper()
+    data_cols = [c for c in columns if not c.get('is_subtotal') and c.get('key') != 'month']
 
-    # FLUXES
-    if 'FLUX' in ct:
-        if 'LIMESTONE' in cn or 'LIMESTONE' in cc:
-            return 'limestone'
-        elif 'DOLOMITE' in cn or 'DOLOMITE' in cc:
-            return 'dolomite'
-        elif 'PYROXINITE' in cn or 'PYROXINITE' in cc:
-            return 'pyroxinite'
-        elif 'OLIVINE' in cn or 'OLI' in cn or 'OLIVINE' in cc:
-            return 'olivine'
-        elif 'BENTONITE' in cn:
-            return 'bentonite'
-        elif 'QUARTZITE' in cn:
-            return 'quartzite'
-        elif 'BENTONITE' in cc:
-            return 'bentonite'
-        return 'limestone'
+    # 1. Exact match with column label (e.g. 'Ore Fines', 'HBI', 'Limestone', 'Dolomite')
+    for col in data_cols:
+        col_lbl = col['label'].strip().upper()
+        col_grp = (col.get('group') or '').strip().upper()
+        if cat == col_lbl:
+            if not col_grp or not grp or col_grp == grp:
+                return col['key']
 
-    # CBRM
-    if ct == 'CBRM':
-        if 'BREEZE' in cn or 'BREEZE' in cc:
-            return 'coke_coke_breeze'
-        elif cc == 'COKE' or 'COKE' in cn:
-            return 'coke_coke_breeze'
-        else:
-            return 'coking_coal_anthracite_pci'
+    # 2. Match within group (e.g. 'Coke' within CBRM -> 'Coke / Coke Breeze')
+    for col in data_cols:
+        col_lbl = col['label'].strip().upper()
+        col_grp = (col.get('group') or '').strip().upper()
+        if col_grp and grp and col_grp == grp:
+            if cat in col_lbl or col_lbl in cat:
+                return col['key']
 
-    # Finish Goods
-    if 'FINISH' in ct or ct == 'FG':
-        if 'PELLET' in cc or 'PELLET' in cn:
-            return 'pellet_loading'
-        elif 'TMT' in cc or 'TMT' in cn or 'BILLET' in cn:
-            return 'tmt_bar_loading'
-        elif 'HRC' in cc or 'HRC' in cn:
-            return 'hrc_loading'
-        elif 'LUMP' in cc or 'LUMP' in cn:
-            return 'lumps_loading'
-        elif 'HARSCO' in cc or 'SLAG' in cc or 'HARSCO' in cn:
-            return 'harsco_slag_loading'
-        elif 'COKE' in cc or 'COKE' in cn:
-            return 'coke_coke_breeze'
+    # 3. Known industry synonyms & abbreviations
+    for col in data_cols:
+        col_lbl = col['label'].strip().upper()
+        col_grp = (col.get('group') or '').strip().upper()
+        # CLO (Calibrated Lump Ore) -> Lumps
+        if cat == 'CLO' and 'LUMP' in col_lbl and (not col_grp or col_grp == 'IBRM'):
+            return col['key']
+        # HMGP / MGP -> MGP (Pig Iron) Loading
+        if ('HMGP' in cat or 'MGP' in cat) and 'MGP' in col_lbl:
+            return col['key']
+        # Pyrite -> Ore Fines
+        if 'PYRITE' in cat and 'ORE FINES' in col_lbl:
+            return col['key']
+        # Slag / GBFS
+        if 'SLAG' in cat and ('SLAG' in col_lbl or 'GBFS' in col_lbl):
+            return col['key']
+        # Sulphate
+        if 'SULPHATE' in cat and 'SULPHATE' in col_lbl:
+            return col['key']
 
-    # SLAG
-    if 'SLAG' in ct:
-        if 'GBFS' in cn or 'GBFS' in cc:
-            return 'gbfs_loading'
-        elif 'GGBS' in cn or 'GGBS' in cc:
-            return 'ggbs_loading'
-        return 'harsco_slag_loading'
-
-    # Other commodities & Finished goods
-    if 'CLINKER' in ct or 'CLINKER' in cc or 'CLINKER' in cn:
-        return 'clinker'
-    if 'AMMONI' in cn or 'SULPHATE' in cn or 'AMMONI' in cc or 'SULPHATE' in cc:
-        return 'ammonium_sulphate'
-    if 'MOP' in cn or 'MOP' in cc:
-        return 'mop'
-    if 'SALAV' in cn and 'LUMP' in cn:
-        return 'salav_lumps'
-    if 'HMGP' in cn or 'HMGP' in cc or 'MGP' in cn or 'PIG IRON' in cn:
-        return 'mgp_loading'
+    # 4. Global label contains search
+    for col in data_cols:
+        col_lbl = col['label'].strip().upper()
+        if cat in col_lbl:
+            return col['key']
 
     return None
 
 
-def fetch_live_cargo_data_from_july(cur):
+def fetch_live_cargo_data_from_july(cur, columns):
     """
-    Fetch cargo quantities for July 2026 onwards by querying lueu_lines
-    joined with vessel_cargo to classify cargo_type and cargo_category dynamically.
+    Fetch cargo quantities for July 2026 onwards by querying operational tables:
+    1. lueu_lines (Jetty operations)
+    2. mbc_header (MBC discharge operations not already logged in lueu_lines)
+    Dynamically matches each record's cargo_category from vessel_cargo directly
+    to the corresponding column in the statement.
     Returns: { month_label: { column_key: quantity } }
     """
-    if not cur:
+    if not cur or not columns:
         return {}
 
     live_data = {}
+
+    # 1. Query lueu_lines joined with vessel_cargo
     try:
-        # Query lueu_lines (jetty cargo handling lines) joined with vessel_cargo
         cur.execute("""
             SELECT
                 TO_CHAR(TO_DATE(BTRIM(l.entry_date), 'YYYY-MM-DD'), 'Mon-YY') AS month_label,
-                LOWER(TRIM(l.cargo_name)) AS cargo_name,
                 COALESCE(vc.cargo_type, 'Other') AS cargo_type,
                 COALESCE(vc.cargo_category, 'Other') AS cargo_category,
                 SUM(COALESCE(l.quantity, 0)) AS qty
@@ -118,11 +91,11 @@ def fetch_live_cargo_data_from_july(cur):
               AND l.quantity IS NOT NULL
               AND NULLIF(BTRIM(l.entry_date), '') IS NOT NULL
               AND TO_DATE(BTRIM(l.entry_date), 'YYYY-MM-DD') >= '2026-07-01'
-            GROUP BY 1, 2, 3, 4
+            GROUP BY 1, 2, 3
         """)
         for r in cur.fetchall():
             m = r['month_label']
-            k = map_cargo_to_column_key(r['cargo_type'], r['cargo_category'], r['cargo_name'])
+            k = match_category_to_column(r['cargo_category'], r['cargo_type'], columns)
             if k and float(r['qty'] or 0) > 0:
                 if m not in live_data:
                     live_data[m] = {}
@@ -130,7 +103,36 @@ def fetch_live_cargo_data_from_july(cur):
     except Exception as e:
         print("Error fetching live cargo data from lueu_lines:", e)
 
-    return live_data
+    # 2. Query mbc_header (for any MBC shipment not logged in lueu_lines)
+    try:
+        cur.execute("""
+            SELECT
+                TO_CHAR(TO_DATE(SUBSTRING(mh.doc_date FROM 1 FOR 10), 'YYYY-MM-DD'), 'Mon-YY') AS month_label,
+                COALESCE(vc.cargo_type, mh.cargo_type, 'Other') AS cargo_type,
+                COALESCE(vc.cargo_category, 'Other') AS cargo_category,
+                SUM(COALESCE(mh.bl_quantity, 0)) AS qty
+            FROM mbc_header mh
+            LEFT JOIN vessel_cargo vc
+                ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(mh.cargo_name))
+            WHERE mh.doc_date IS NOT NULL
+              AND mh.doc_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+              AND TO_DATE(SUBSTRING(mh.doc_date FROM 1 FOR 10), 'YYYY-MM-DD') >= '2026-07-01'
+              AND mh.id NOT IN (
+                  SELECT DISTINCT source_id 
+                  FROM lueu_lines 
+                  WHERE source_type = 'MBC' AND source_id IS NOT NULL
+              )
+            GROUP BY 1, 2, 3
+        """)
+        for r in cur.fetchall():
+            m = r['month_label']
+            k = match_category_to_column(r['cargo_category'], r['cargo_type'], columns)
+            if k and float(r['qty'] or 0) > 0:
+                if m not in live_data:
+                    live_data[m] = {}
+                live_data[m][k] = live_data[m].get(k, 0) + float(r['qty'])
+    except Exception as e:
+        print("Error fetching live cargo data from mbc_header:", e)
 
     return live_data
 
@@ -153,7 +155,9 @@ def build_cargo_quantity_statement_sheet(wb, cur=None):
         all_years = json.load(f)
 
     # Fetch live cargo handling data for July 2026 onwards if DB cursor is provided
-    live_fy26_data = fetch_live_cargo_data_from_july(cur) if cur else {}
+    # Dynamically matched to FY 26-27 columns by cargo_category
+    fy26_columns = all_years[-1]['columns'] if all_years else []
+    live_fy26_data = fetch_live_cargo_data_from_july(cur, fy26_columns) if cur else {}
 
     ws = wb.create_sheet(title="Cargo Quantity Statement")
     ws.views.sheetView[0].showGridLines = True
