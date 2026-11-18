@@ -7267,7 +7267,8 @@ def _build_mbc_discharge_sheet(wb, cur, report_date):
             mh.doc_date,
             mh.mbc_name,
             COALESCE(mm.mbc_owner_name, '') AS company,
-            mh.cargo_type,
+            COALESCE(vc.cargo_type, mh.cargo_type, '') AS cargo_type,
+            COALESCE(vc.cargo_category, '') AS cargo_category,
             mh.cargo_name,
             COALESCE(mh.bl_quantity, 0) AS bl_quantity,
             mh.load_port,
@@ -7286,6 +7287,8 @@ def _build_mbc_discharge_sheet(wb, cur, report_date):
         FROM mbc_header mh
         LEFT JOIN mbc_master mm
             ON UPPER(TRIM(mh.mbc_name)) = UPPER(TRIM(mm.mbc_name))
+        LEFT JOIN vessel_cargo vc
+            ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(mh.cargo_name))
         LEFT JOIN (
             SELECT DISTINCT ON (mbc_id) *
             FROM mbc_discharge_port_lines
@@ -9653,6 +9656,13 @@ def daily_progress_report_excel():
         # =====================================================
 
         _build_mbc_discharge_sheet(wb, cur, report_date)
+
+        # =====================================================
+        # SHEET 6: CARGO QUANTITY STATEMENT
+        # =====================================================
+
+        from .cargo_statement import build_cargo_quantity_statement_sheet
+        build_cargo_quantity_statement_sheet(wb, cur)
 
         # =====================================================
         # GENERATE FILE
