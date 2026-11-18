@@ -49,6 +49,16 @@ def callback_logs():
     return jsonify({'data': data, 'last_page': (total + size - 1) // size, 'total': total})
 
 
+@bp.route('/api/module/FSAP01/callback-logs/<int:log_id>', methods=['DELETE'])
+@login_required
+def delete_callback_log(log_id):
+    """Admin only: delete a callback log and restore the invoice/CN it changed."""
+    if not session.get('is_admin'):
+        return jsonify({'ok': False, 'error': 'Admin only'}), 403
+    ok, msg = model.delete_callback_log(log_id)
+    return jsonify({'ok': ok, 'message' if ok else 'error': msg}), (200 if ok else 404)
+
+
 @bp.route('/api/module/FSAP01/outbound-logs')
 @login_required
 def outbound_logs():

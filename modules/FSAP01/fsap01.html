@@ -116,6 +116,7 @@
 addToRecent('FSAP01', 'SAP Integration');
 
 const isDark = localStorage.getItem('theme') === 'dark';
+const IS_ADMIN = {{ 'true' if session.get('is_admin') else 'false' }};
 
 function sapBadge(val) {
     if (val) return `<span class="badge badge-posted">${val}</span>`;
@@ -248,12 +249,30 @@ const callbacksTable = new Tabulator('#callbacksTable', {
                 } catch(e) { return raw; }
             }
         },
-        {title: 'Detail',      field: 'id',                   width: 75,
-            formatter: function() { return '<button class="json-btn">View</button>'; },
-            cellClick: function(e, cell) { openCallbackModal(cell.getRow().getData()); }
+        {title: 'Detail',      field: 'id',                   width: IS_ADMIN ? 140 : 75,
+            formatter: function() {
+                let h = '<button class="json-btn" data-act="view">View</button>';
+                if (IS_ADMIN) h += ' <button class="json-btn" data-act="delete" style="background:#c0392b;">Delete</button>';
+                return h;
+            },
+            cellClick: function(e, cell) {
+                const d = cell.getRow().getData();
+                if (e.target.getAttribute('data-act') === 'delete') deleteCallbackLog(d.id);
+                else openCallbackModal(d);
+            }
         },
     ]
 });
+
+async function deleteCallbackLog(logId) {
+    if (!confirm('Delete callback log #' + logId + ' and restore the invoice/credit note to its state before this callback?')) return;
+    try {
+        const res = await fetch('/api/module/FSAP01/callback-logs/' + logId, {method: 'DELETE'});
+        const r = await res.json();
+        if (r.ok) { alert(r.message); callbacksTable.setData('/api/module/FSAP01/callback-logs'); }
+        else { alert('Error: ' + (r.error || 'Failed')); }
+    } catch(e) { alert('Error: ' + e.message); }
+}
 
 // ── SAP Outbound Log table ────────────────────────────────────────────────────
 const outboundTable = new Tabulator('#outboundTable', {

@@ -123,6 +123,114 @@ def get_callback_logs(page=1, size=50):
     return rows, total
 
 
+# Undo what sap_inbound._apply_record did for each record of one callback log.
+# The log keeps no before-image, so each outcome is reversed from the payload,
+# and only while the row still carries that callback's values.
+_UNDO_CALLBACK_SQL = '''
+CREATE TEMP TABLE cb ON COMMIT DROP AS
+SELECT l.id = %(log_id)s                                            AS deleting,
+       TRIM(q.rec->>'Reference')                                    AS ref,
+       LEFT(NULLIF(TRIM(q.rec->>'Document_Number'), ''), 50)        AS sap_doc,
+       LEFT(NULLIF(COALESCE(q.rec->>'IRN_No', q.rec->>'IRN'), ''), 64) AS irn,
+       r.res->>'Message'                                            AS outcome
+FROM integration_logs l
+CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(l.request_body::jsonb->'Record') = 'array'
+                                             THEN l.request_body::jsonb->'Record' ELSE '[]' END) WITH ORDINALITY q(rec, n)
+JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(l.response_body::jsonb->'Record') = 'array'
+                                       THEN l.response_body::jsonb->'Record' ELSE '[]' END) WITH ORDINALITY r(res, n) ON r.n = q.n
+WHERE l.integration_type = 'SAP_INBOUND';
+
+-- Reversal recorded: un-cancel and strip the reversal remark
+UPDATE invoice_header i
+SET invoice_status = CASE WHEN COALESCE(i.gst_irn, '') <> '' THEN 'Posted to GST' ELSE 'Posted to SAP' END,
+    remarks = CASE WHEN i.remarks = c.note THEN ''
+                   ELSE REPLACE(REPLACE(i.remarks, ' | ' || c.note, ''), c.note || ' | ', '') END
+FROM (SELECT ref, 'Reversal SAP Doc: ' || sap_doc AS note
+      FROM cb WHERE deleting AND outcome = 'Reversal recorded') c
+WHERE i.invoice_number = c.ref
+  AND i.invoice_status = 'Cancelled'
+  AND STRPOS(i.remarks, c.note) > 0;
+
+-- Stored SAP error: back to Posted to SAP
+UPDATE invoice_header i
+SET invoice_status = 'Posted to SAP', sap_error = NULL
+FROM cb c
+WHERE c.deleting AND c.outcome LIKE 'Stored SAP error: %%'
+  AND i.invoice_number = c.ref
+  AND i.invoice_status = 'SAP Failed'
+  AND LEFT(i.sap_error, 80) = SUBSTRING(c.outcome FROM 19);
+
+UPDATE fdcn_header f
+SET doc_status = 'Posted to SAP', rejection_reason = NULL
+FROM cb c
+WHERE c.deleting AND c.outcome LIKE 'Stored SAP error: %%'
+  AND f.doc_number = c.ref
+  AND f.doc_status = 'SAP Failed'
+  AND LEFT(f.rejection_reason, 80) = SUBSTRING(c.outcome FROM 19)
+  AND NOT EXISTS (SELECT 1 FROM invoice_header i WHERE i.invoice_number = c.ref);
+
+-- Updated: clear the SAP doc and/or IRN fields this callback filled,
+-- unless another remaining callback also updated the same reference.
+UPDATE invoice_header i SET
+    sap_document_number = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE i.sap_document_number END,
+    sap_posting_date    = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE i.sap_posting_date END,
+    sap_company_code    = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE i.sap_company_code END,
+    gst_irn             = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE i.gst_irn END,
+    gst_ack_number      = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE i.gst_ack_number END,
+    gst_ack_date        = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE i.gst_ack_date END,
+    gst_qr_code         = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE i.gst_qr_code END,
+    invoice_status      = CASE WHEN c.irn IS NOT NULL AND i.invoice_status = 'Posted to GST'
+                               THEN 'Posted to SAP' ELSE i.invoice_status END
+FROM cb c
+WHERE c.deleting AND c.outcome LIKE 'Updated%%'
+  AND i.invoice_number = c.ref
+  AND (c.sap_doc IS NULL OR i.sap_document_number = c.sap_doc)
+  AND (c.irn IS NULL OR i.gst_irn = c.irn)
+  AND NOT EXISTS (SELECT 1 FROM cb k WHERE NOT k.deleting AND k.ref = c.ref AND k.outcome LIKE 'Updated%%');
+
+UPDATE fdcn_header f SET
+    sap_document_number = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE f.sap_document_number END,
+    sap_posting_date    = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE f.sap_posting_date END,
+    sap_company_code    = CASE WHEN c.sap_doc IS NOT NULL THEN NULL ELSE f.sap_company_code END,
+    gst_irn             = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE f.gst_irn END,
+    gst_ack_number      = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE f.gst_ack_number END,
+    gst_ack_date        = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE f.gst_ack_date END,
+    gst_qr_code         = CASE WHEN c.irn IS NOT NULL THEN NULL ELSE f.gst_qr_code END,
+    doc_status          = CASE WHEN c.irn IS NOT NULL AND f.doc_status = 'Posted to GST'
+                               THEN 'Posted to SAP' ELSE f.doc_status END
+FROM cb c
+WHERE c.deleting AND c.outcome LIKE 'Updated%%'
+  AND f.doc_number = c.ref
+  AND (c.sap_doc IS NULL OR f.sap_document_number = c.sap_doc)
+  AND (c.irn IS NULL OR f.gst_irn = c.irn)
+  AND NOT EXISTS (SELECT 1 FROM cb k WHERE NOT k.deleting AND k.ref = c.ref AND k.outcome LIKE 'Updated%%')
+  AND NOT EXISTS (SELECT 1 FROM invoice_header i WHERE i.invoice_number = c.ref);
+'''
+
+
+def delete_callback_log(log_id):
+    """Delete one SAP_INBOUND log and restore the invoice/CN it changed. Return (ok, message)."""
+    conn = get_db()
+    cur = get_cursor(conn)
+    cur.execute("SELECT id FROM integration_logs WHERE id=%s AND integration_type='SAP_INBOUND' FOR UPDATE",
+                [log_id])
+    if not cur.fetchone():
+        conn.close()
+        return False, 'Callback log not found'
+    try:
+        cur.execute(_UNDO_CALLBACK_SQL, {'log_id': log_id})
+        cur.execute("SELECT ref, outcome FROM cb WHERE deleting")
+        records = [f"{r['ref']} ({r['outcome']})" for r in cur.fetchall()]
+        cur.execute("DELETE FROM integration_logs WHERE id=%s", [log_id])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return True, 'Log deleted and its effect undone where the record was unchanged since: ' + ('; '.join(records) or 'no records')
+
+
 def get_sap_cn_logs(page=1, size=50):
     """FDCN01 credit notes with SAP posting data."""
     conn = get_db()
