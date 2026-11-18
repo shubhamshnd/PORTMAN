@@ -92,8 +92,8 @@ def map_cargo_to_column_key(cargo_type, cargo_category, cargo_name):
 
 def fetch_live_cargo_data_from_july(cur):
     """
-    Fetch cargo quantities for July 2026 onwards by joining vessel_cargo
-    to categorize cargo_type and cargo_category dynamically.
+    Fetch cargo quantities for July 2026 onwards by querying lueu_lines
+    joined with vessel_cargo to classify cargo_type and cargo_category dynamically.
     Returns: { month_label: { column_key: quantity } }
     """
     if not cur:
@@ -101,7 +101,7 @@ def fetch_live_cargo_data_from_july(cur):
 
     live_data = {}
     try:
-        # 1. Query lueu_lines (jetty cargo discharge) joined with vessel_cargo
+        # Query lueu_lines (jetty cargo handling lines) joined with vessel_cargo
         cur.execute("""
             SELECT
                 TO_CHAR(TO_DATE(BTRIM(l.entry_date), 'YYYY-MM-DD'), 'Mon-YY') AS month_label,
@@ -112,7 +112,7 @@ def fetch_live_cargo_data_from_july(cur):
             FROM lueu_lines l
             LEFT JOIN vessel_cargo vc
                 ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(l.cargo_name))
-            WHERE l.is_deleted IS NOT TRUE
+            WHERE (l.is_deleted IS FALSE OR l.is_deleted IS NULL)
               AND l.quantity IS NOT NULL
               AND NULLIF(BTRIM(l.entry_date), '') IS NOT NULL
               AND TO_DATE(BTRIM(l.entry_date), 'YYYY-MM-DD') >= '2026-07-01'
@@ -125,35 +125,10 @@ def fetch_live_cargo_data_from_july(cur):
                 if m not in live_data:
                     live_data[m] = {}
                 live_data[m][k] = live_data[m].get(k, 0) + float(r['qty'])
-    except Exception:
-        pass
+    except Exception as e:
+        print("Error fetching live cargo data from lueu_lines:", e)
 
-    try:
-        # 2. Query mbc_header joined with vessel_cargo
-        cur.execute("""
-            SELECT
-                TO_CHAR(TO_DATE(SUBSTRING(mh.doc_date FROM 1 FOR 10), 'YYYY-MM-DD'), 'Mon-YY') AS month_label,
-                LOWER(TRIM(mh.cargo_name)) AS cargo_name,
-                COALESCE(vc.cargo_type, mh.cargo_type) AS cargo_type,
-                COALESCE(vc.cargo_category, 'Other') AS cargo_category,
-                SUM(COALESCE(mh.bl_quantity, 0)) AS qty
-            FROM mbc_header mh
-            LEFT JOIN vessel_cargo vc
-                ON LOWER(TRIM(vc.cargo_name)) = LOWER(TRIM(mh.cargo_name))
-            WHERE mh.doc_date IS NOT NULL
-              AND mh.doc_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-              AND TO_DATE(SUBSTRING(mh.doc_date FROM 1 FOR 10), 'YYYY-MM-DD') >= '2026-07-01'
-            GROUP BY 1, 2, 3, 4
-        """)
-        for r in cur.fetchall():
-            m = r['month_label']
-            k = map_cargo_to_column_key(r['cargo_type'], r['cargo_category'], r['cargo_name'])
-            if k and float(r['qty'] or 0) > 0:
-                if m not in live_data:
-                    live_data[m] = {}
-                live_data[m][k] = live_data[m].get(k, 0) + float(r['qty'])
-    except Exception:
-        pass
+    return live_data
 
     return live_data
 
