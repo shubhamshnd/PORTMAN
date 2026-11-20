@@ -56,6 +56,11 @@
 <div class="module-header">
     <h2>Service Recording</h2>
     <span class="module-code">SRV01</span>
+    {% if session.get('is_admin') %}
+    <span style="font-size:11px;font-weight:600;color:#2b6cb0;background:#ebf8ff;padding:2px 8px;border-radius:4px;border:1px solid #bee3f8;">Admin</span>
+    {% elif perms.can_read and not perms.can_add and not perms.can_edit and not perms.can_delete %}
+    <span style="font-size:11px;font-weight:600;color:#4a5568;background:#edf2f7;padding:2px 8px;border-radius:4px;border:1px solid #e2e8f0;">View Only</span>
+    {% endif %}
 </div>
 
 <div class="toolbar">
@@ -222,7 +227,7 @@
                 {% endif %}
             </td>
             <td>
-                <button class="btn btn-save" onclick="editRecord({{ row.id }})" style="font-size:10px; padding:3px 8px;">{{ 'View' if (row.is_billed or row.billed_quantity) else 'Edit' }}</button>
+                <button class="btn btn-save" onclick="editRecord({{ row.id }})" style="font-size:10px; padding:3px 8px;">{{ 'View' if (row.is_billed or row.billed_quantity or not perms.can_edit) else 'Edit' }}</button>
                 {% if is_approver and row.doc_status == 'Pending' %}
                 <button class="btn btn-approve" onclick="approveRecord({{ row.id }})" style="font-size:10px; padding:3px 8px;">Approve</button>
                 {% endif %}
@@ -630,8 +635,9 @@ async function editRecord(recordId) {
     const h = json.header;
     currentRecordId = h.id;
     document.getElementById('editRecordId').value = h.id;
-    const locked = !!(h.is_billed || parseFloat(h.billed_quantity || 0) > 0);
-    document.getElementById('entryTitle').textContent = (locked ? 'View Service Record (Billed) - ' : 'Edit Service Record - ') + h.record_number;
+    const canEdit = {{ 1 if perms.can_edit else 0 }};
+    const locked = !!(h.is_billed || parseFloat(h.billed_quantity || 0) > 0) || !canEdit;
+    document.getElementById('entryTitle').textContent = (locked ? (canEdit ? 'View Service Record (Billed) - ' : 'View Service Record - ') : 'Edit Service Record - ') + h.record_number;
     setReadOnly(locked);
     document.getElementById('recordNumber').value = h.record_number;
     document.getElementById('recordDate').value = h.record_date || '';
