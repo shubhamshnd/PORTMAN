@@ -4,6 +4,7 @@ from database import get_module_config, get_user_permissions, get_db, get_cursor
 from datetime import datetime, timedelta
 import re
 import os
+import psycopg2
 import csv
 import io
 
@@ -264,7 +265,47 @@ _TRAIL_SQL = '''
     ORDER BY ts DESC
     LIMIT %s
 '''
-_TRAIL_LIMIT = 5000  # ponytail: hard row cap; add paging if a month ever exceeds it
+_TRAIL_LIMIT = 5000  # ponytail: hard row cap per source; add paging if a month ever exceeds it
+
+# Row-level changes recorded by the data_audit trigger (see migration dataaudit001).
+_DATA_SQL = '''
+    SELECT table_name, row_id, op, old_data, new_data, changed_by, changed_at AS ts
+    FROM data_audit
+    WHERE changed_at BETWEEN %s AND %s
+    ORDER BY changed_at DESC
+    LIMIT %s
+'''
+_OP_NAMES = {'I': 'Created', 'U': 'Edited', 'D': 'Deleted'}
+
+
+def _fmt(v):
+    return '-' if v is None or v == '' else str(v)
+
+
+def _describe_change(op, old, new):
+    """One readable line per field: what was entered, changed or removed."""
+    if op == 'U':
+        return '\n'.join(f"{k}: {_fmt((old or {}).get(k))} → {_fmt(v)}" for k, v in sorted(new.items()))
+    row = new if op == 'I' else old
+    return '\n'.join(f"{k}: {_fmt(v)}" for k, v in row.items() if k != 'id' and v not in (None, ''))
+
+
+def _data_rows(cur, from_dt, to_dt, limit):
+    cur.execute(_DATA_SQL, (from_dt, to_dt, limit))
+    out = []
+    for r in cur.fetchall():
+        old, new = r['old_data'], r['new_data']
+        # Parent document hint (mbc_id, vcn_id, bill_id …) so a sub-table row can be traced.
+        ctx = {**(old or {}), **(new or {})}
+        parents = ' '.join(f"{k} {ctx[k]}" for k in sorted(ctx)
+                           if k.endswith('_id') and ctx[k] is not None)
+        out.append({
+            'source': 'Data Change', 'module_code': r['table_name'],
+            'record_id': r['row_id'], 'action': _OP_NAMES.get(r['op'], r['op']),
+            'by_user': r['changed_by'], 'ts': r['ts'], 'ref': parents,
+            'comment': _describe_change(r['op'], old, new),
+        })
+    return out
 
 
 @bp.route('/api/module/AUD01/trail')
@@ -278,14 +319,22 @@ def get_trail():
     try:
         cur = get_cursor(conn)
         cur.execute(_TRAIL_SQL, (from_dt, to_dt, _TRAIL_LIMIT + 1))
-        rows = [dict(r) for r in cur.fetchall()]
+        events = [dict(r) for r in cur.fetchall()]
+        try:
+            changes = _data_rows(cur, from_dt, to_dt, _TRAIL_LIMIT + 1)
+        except psycopg2.errors.UndefinedTable:  # migration dataaudit001 not run yet
+            conn.rollback()
+            changes = []
     finally:
         conn.close()
+    truncated = len(events) > _TRAIL_LIMIT or len(changes) > _TRAIL_LIMIT
+    rows = sorted(events[:_TRAIL_LIMIT] + changes[:_TRAIL_LIMIT],
+                  key=lambda r: r['ts'] or datetime.min, reverse=True)
     for r in rows:
         r['ts'] = r['ts'].strftime('%d-%m-%Y %H:%M:%S') if r['ts'] else ''
     return jsonify({
-        'rows': rows[:_TRAIL_LIMIT],
-        'truncated': len(rows) > _TRAIL_LIMIT,
+        'rows': rows,
+        'truncated': truncated,
         'from_date': from_dt.strftime('%Y-%m-%d'),
         'to_date': to_dt.strftime('%Y-%m-%d'),
     })

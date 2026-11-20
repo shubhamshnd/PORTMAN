@@ -9,8 +9,25 @@ MODULE_TABLE_REGISTRY = {
 }
 
 
+def _request_user():
+    """Logged-in username for the current Flask request, else None
+    (background workers, scripts, CLI)."""
+    try:
+        from flask import has_request_context, session
+        return session.get('username') if has_request_context() else None
+    except Exception:
+        return None
+
+
 def get_db():
     conn = psycopg2.connect(DATABASE_URL)
+    # The data_audit trigger reads app.user to record who made each change.
+    # Committed straight away so a later rollback on this connection can't undo it.
+    user = _request_user()
+    if user:
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('app.user', %s, false)", (str(user),))
+        conn.commit()
     return conn
 
 
