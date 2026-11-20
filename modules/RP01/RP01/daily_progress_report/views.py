@@ -9716,6 +9716,13 @@ def daily_progress_report_excel():
         build_cargo_quantity_graph_sheet(wb)
 
         # =====================================================
+        # SHEET 8: BUDGET VS ACTUAL
+        # =====================================================
+
+        from .budget_actual import build_budget_vs_actual_sheet
+        build_budget_vs_actual_sheet(wb, cur, report_date)
+
+        # =====================================================
         # GENERATE FILE
         # =====================================================
 
