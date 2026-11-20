@@ -32,11 +32,23 @@ def get_data():
         cur = get_cursor(conn)
         cur.execute('''SELECT h.id as mbct01_id, m.id, m.operation_type, m.doc_num, m.doc_series, 
                        m.doc_date, m.mbc_name, m.load_port, 
-                       m.cargo_type, m.cargo_name, m.bl_quantity, m.quantity_uom, m.doc_status, m.created_by 
+                       m.cargo_type, m.cargo_name, m.bl_quantity, m.quantity_uom, m.doc_status, 
+                       h.created_by 
                        FROM mbct01_header h
                        JOIN mbc_header m ON h.mbc_id = m.id 
                        ORDER BY h.id DESC''')
         res = cur.fetchall()
+        for r in res:
+            cb = r.get('created_by')
+            if isinstance(cb, dict):
+                r['created_by'] = cb.get('username') or str(cb.get('user_id') or '')
+            elif isinstance(cb, str) and cb.strip().startswith('{'):
+                try:
+                    parsed = json.loads(cb)
+                    if isinstance(parsed, dict):
+                        r['created_by'] = parsed.get('username') or str(parsed.get('user_id') or cb)
+                except Exception:
+                    pass
         return jsonify({"data": res, "total": len(res)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -65,11 +77,27 @@ def save_header():
             
         conn = get_db()
         cur = get_cursor(conn)
-        cur.execute("INSERT INTO mbct01_header (mbc_id) VALUES (%s) ON CONFLICT (mbc_id) DO UPDATE SET mbc_id=EXCLUDED.mbc_id RETURNING id", (mbc_id,))
-        new_id = cur.fetchone()['id']
+
+        user_id = session.get('user_id')
+        username = session.get('username') or data.get('created_by') or 'admin'
+        creator_info = {
+            "user_id": user_id,
+            "username": username
+        }
+        creator_json = json.dumps(creator_info)
+
+        cur.execute("""
+            INSERT INTO mbct01_header (mbc_id, created_by) 
+            VALUES (%s, %s::jsonb) 
+            ON CONFLICT (mbc_id) DO UPDATE SET 
+                created_by = COALESCE(mbct01_header.created_by, EXCLUDED.created_by)
+            RETURNING id, created_by
+        """, (mbc_id, creator_json))
+        res = cur.fetchone()
+        new_id = res['id']
         conn.commit()
         
-        return jsonify({"success": True, "id": new_id})
+        return jsonify({"success": True, "id": new_id, "created_by": username})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
