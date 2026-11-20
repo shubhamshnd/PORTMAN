@@ -7149,26 +7149,17 @@ def _build_mbc_discharge_sheet(wb, cur, report_date):
 
     report_dt = datetime.strptime(report_date, "%Y-%m-%d")
 
-    # Determine reporting month date range consistent with Sheets 2, 3, 4
-    if report_dt.day == 1:
-        prev_month_last_day = report_dt.replace(day=1) - timedelta(days=1)
-        target_year = prev_month_last_day.year
-        target_month = prev_month_last_day.month
-        month_start_date = date(target_year, target_month, 1)
-        _, last_day_num = calendar.monthrange(target_year, target_month)
-        month_end_date = date(target_year, target_month, last_day_num)
-        start_date = month_start_date
-        end_date = month_end_date
-    else:
-        target_year = report_dt.year
-        target_month = report_dt.month
-        month_start_date = date(target_year, target_month, 1)
-        _, last_day_num = calendar.monthrange(target_year, target_month)
-        month_end_date = date(target_year, target_month, last_day_num)
-        start_date = month_start_date
-        end_date = report_dt.date() - timedelta(days=1)
+    # MBC Discharge sheet starts from 1 May 2026
+    start_str = "2026-05-01"
 
-    start_str = start_date.strftime("%Y-%m-%d")
+    if report_dt.day == 1 and report_dt.date() > date(2026, 5, 1):
+        end_date = report_dt.replace(day=1).date() - timedelta(days=1)
+    else:
+        end_date = report_dt.date()
+
+    if end_date < date(2026, 5, 1):
+        end_date = date(2026, 5, 1)
+
     end_str = end_date.strftime("%Y-%m-%d")
 
     # Create Sheet 5
@@ -7239,25 +7230,79 @@ def _build_mbc_discharge_sheet(wb, cur, report_date):
         else:
             cell.fill = fill_normal_hdr
 
-    # Query delays by mbc_id
+    # Query MBC delays from lueu_lines matching by MBC No. (source_id = mh.id or source_display = mh.doc_num)
     cur.execute("""
         SELECT
-            mbc_id,
-            SUM(CASE WHEN delay_name ILIKE '%RMHS%' OR delay_account_type ILIKE '%RMHS%' OR equipment_name ILIKE '%CONVEYOR%' OR equipment_name ILIKE '%BELT%' THEN total_time_hrs ELSE 0 END) AS rmhs_delays,
-            SUM(CASE WHEN delay_name ILIKE '%SHIFT%' THEN total_time_hrs ELSE 0 END) AS mbc_shifting,
-            SUM(CASE WHEN delay_name ILIKE '%WEATHER%' OR delay_name ILIKE '%RAIN%' OR delay_account_type ILIKE '%Weather%' THEN total_time_hrs ELSE 0 END) AS bad_weather,
-            SUM(CASE WHEN delay_name NOT ILIKE '%RMHS%' AND delay_name NOT ILIKE '%SHIFT%' AND delay_name NOT ILIKE '%WEATHER%' AND delay_name NOT ILIKE '%RAIN%' AND delay_account_type NOT ILIKE '%Weather%' AND delay_account_type NOT ILIKE '%RMHS%' THEN total_time_hrs ELSE 0 END) AS jetty_delays
-        FROM mbc_delays
-        GROUP BY mbc_id
+            l.source_id AS mbc_id,
+            l.source_display,
+            l.delay_name,
+            pdt.type AS pdt_type,
+            l.from_time,
+            l.to_time
+        FROM lueu_lines l
+        LEFT JOIN port_delay_types pdt
+            ON LOWER(TRIM(pdt.name)) = LOWER(TRIM(l.delay_name))
+        WHERE l.source_type = 'MBC'
+          AND NULLIF(BTRIM(l.delay_name), '') IS NOT NULL
+          AND LOWER(TRIM(l.delay_name)) <> 'unloading'
+          AND l.from_time IS NOT NULL
+          AND l.to_time IS NOT NULL
     """)
     delays_map = {}
-    for r in cur.fetchall():
-        delays_map[r['mbc_id']] = {
-            'rmhs': float(r['rmhs_delays'] or 0),
-            'shift': float(r['mbc_shifting'] or 0),
-            'bad_wx': float(r['bad_weather'] or 0),
-            'jetty': float(r['jetty_delays'] or 0)
-        }
+    delays_by_doc_num = {}
+    for r_d in cur.fetchall():
+        mbc_id = r_d['mbc_id']
+        s_disp = (r_d['source_display'] or '').strip()
+        dn = (r_d['delay_name'] or '').strip()
+        dn_u = dn.upper()
+        pdt_u = (r_d['pdt_type'] or '').strip().upper()
+
+        dur = 0.0
+        try:
+            f_parts = r_d['from_time'].strip().split(':')
+            t_parts = r_d['to_time'].strip().split(':')
+            f_min = int(f_parts[0]) * 60 + int(f_parts[1])
+            t_min = int(t_parts[0]) * 60 + int(t_parts[1])
+            if t_min < f_min:
+                t_min += 24 * 60
+            dur = (t_min - f_min) / 60.0
+        except Exception:
+            dur = 0.0
+
+        if dur <= 0:
+            continue
+
+        if mbc_id not in delays_map:
+            delays_map[mbc_id] = {'rmhs': 0.0, 'shift': 0.0, 'bad_wx': 0.0, 'jetty': 0.0}
+
+        # Classify into 4 buckets:
+        # 1. RMHS Delays
+        if 'RMHS' in pdt_u or 'RMHS' in dn_u or 'STACKER' in dn_u or dn_u.startswith('C-131') or dn_u.startswith('LS-') or 'PLANT POWER' in dn_u:
+            delays_map[mbc_id]['rmhs'] += dur
+        # 2. MBC Shifting
+        elif 'SHIFT' in dn_u or 'BERTH' in dn_u or 'CAST OFF' in dn_u:
+            delays_map[mbc_id]['shift'] += dur
+        # 3. Bad Weather
+        elif 'WEATHER' in dn_u or 'RAIN' in dn_u or 'WEATHER' in pdt_u:
+            delays_map[mbc_id]['bad_wx'] += dur
+        # 4. Jetty Delays (all other equipment/jetty maintenance and operational delays)
+        else:
+            delays_map[mbc_id]['jetty'] += dur
+
+        # Also index by doc_num if present in source_display (e.g. MBC26270003)
+        if s_disp:
+            first_token = s_disp.split('/')[0].strip()
+            if first_token:
+                if first_token not in delays_by_doc_num:
+                    delays_by_doc_num[first_token] = {'rmhs': 0.0, 'shift': 0.0, 'bad_wx': 0.0, 'jetty': 0.0}
+                if 'RMHS' in pdt_u or 'RMHS' in dn_u or 'STACKER' in dn_u or dn_u.startswith('C-131') or dn_u.startswith('LS-') or 'PLANT POWER' in dn_u:
+                    delays_by_doc_num[first_token]['rmhs'] += dur
+                elif 'SHIFT' in dn_u or 'BERTH' in dn_u or 'CAST OFF' in dn_u:
+                    delays_by_doc_num[first_token]['shift'] += dur
+                elif 'WEATHER' in dn_u or 'RAIN' in dn_u or 'WEATHER' in pdt_u:
+                    delays_by_doc_num[first_token]['bad_wx'] += dur
+                else:
+                    delays_by_doc_num[first_token]['jetty'] += dur
 
     # Query MBC records
     query = """
@@ -7348,8 +7393,8 @@ def _build_mbc_discharge_sheet(wb, cur, report_date):
         v_dt = _to_dt(row['vessel_cast_off'])
         w_dt = _to_dt(row['sailed_out_load_port'])
 
-        # Delays
-        d_info = delays_map.get(row['id'], {'rmhs': 0.0, 'shift': 0.0, 'bad_wx': 0.0, 'jetty': 0.0})
+        # Delays from lueu_lines matching by MBC No. (id or doc_num)
+        d_info = delays_map.get(row['id']) or delays_by_doc_num.get(row.get('doc_num')) or {'rmhs': 0.0, 'shift': 0.0, 'bad_wx': 0.0, 'jetty': 0.0}
 
         # Cell A: Sr No
         cA = ws.cell(r, 1, idx)
