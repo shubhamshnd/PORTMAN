@@ -46,6 +46,13 @@
 .btn-export { background:#276749; color:#fff; border:none; padding:6px 14px; border-radius:4px; font-size:12px; cursor:pointer; font-weight:600; }
 .btn-export:hover { background:#22543d; }
 .aud-range-warn { font-size:11px; color:#c05621; display:none; }
+.aud-tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:2px solid var(--border-color); }
+.aud-tab { padding:8px 16px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600;
+           color:var(--text-secondary); border-bottom:2px solid transparent; margin-bottom:-2px; }
+.aud-tab.active { color:#2b6cb0; border-bottom-color:#2b6cb0; }
+.aud-select { padding:5px 8px; border:1px solid var(--border-color); border-radius:4px; font-size:12px; background:var(--bg-primary); color:var(--text-primary); }
+.aud-comment { font-size:11px; max-width:420px; white-space:pre-wrap; word-break:break-word; }
+body.dark-theme .aud-select { background:#1a202c; border-color:#4a5568; color:#e2e8f0; }
 
 body.dark-theme .aud-stat-card { background:#2d3748; border-color:#4a5568; }
 body.dark-theme .aud-filter-btn { background:#4a5568; color:#e2e8f0; border-color:#718096; }
@@ -60,6 +67,53 @@ body.dark-theme .aud-search, body.dark-theme .aud-date-input { background:#1a202
     <span class="module-code">AUD01</span>
 </div>
 
+<div class="aud-tabs">
+    <button class="aud-tab active" data-tab="access" onclick="showAudTab('access')">Access Log</button>
+    <button class="aud-tab" data-tab="trail" onclick="showAudTab('trail')">Audit Trail</button>
+</div>
+
+<!-- ═══ Audit Trail tab: approval_log + cutover_audit ═══ -->
+<div id="tab-trail" style="display:none;">
+    <div class="aud-section">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);">From</label>
+            <input type="date" id="trailFromDate" class="aud-date-input">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);">To</label>
+            <input type="date" id="trailToDate" class="aud-date-input">
+            <button class="btn btn-save" onclick="loadTrail()" style="padding:5px 14px;font-size:12px;">Apply</button>
+            <select id="trailSource" class="aud-select" onchange="renderTrail()">
+                <option value="">All tables</option>
+                <option>Approval Log</option>
+                <option>Cutover Audit</option>
+            </select>
+            <select id="trailModule" class="aud-select" onchange="renderTrail()"></select>
+            <select id="trailAction" class="aud-select" onchange="renderTrail()"></select>
+            <input class="aud-search" id="trailSearch" type="text" placeholder="Search doc, user, comment, PO…" oninput="renderTrail()">
+            <span id="trailCount" style="margin-left:auto;font-size:11px;color:var(--text-secondary);"></span>
+            <button class="btn-export" onclick="exportTrailCsv()" title="Export filtered rows as CSV">&#8659; Export CSV</button>
+        </div>
+        <div class="aud-table-wrap" style="max-height:640px;">
+            <table class="aud-table">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Table</th>
+                        <th>Module</th>
+                        <th>Document</th>
+                        <th>Action</th>
+                        <th>By</th>
+                        <th>Comment / Details</th>
+                    </tr>
+                </thead>
+                <tbody id="trailBody">
+                    <tr><td colspan="7" class="aud-loading">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="tab-access">
 <!-- Date Range + Export Controls -->
 <div class="aud-section" style="margin-bottom:16px;">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -136,6 +190,7 @@ body.dark-theme .aud-search, body.dark-theme .aud-date-input { background:#1a202
         </div>
     </div>
 </div>
+</div><!-- /tab-access -->
 {% endblock %}
 
 {% block scripts %}
@@ -386,8 +441,102 @@ function renderAudTable() {
     document.getElementById('audTableBody').innerHTML = rows;
 }
 
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+let _trailLoaded = false;
+function showAudTab(tab) {
+    document.querySelectorAll('.aud-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('tab-access').style.display = tab === 'access' ? '' : 'none';
+    document.getElementById('tab-trail').style.display  = tab === 'trail'  ? '' : 'none';
+    if (tab === 'trail' && !_trailLoaded) { _trailLoaded = true; loadTrail(); }
+}
+
+// ── Audit Trail (approval_log + cutover_audit) ───────────────────────────────
+let _trailRows = [];
+const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function _fillSelect(id, label, values) {
+    const sel = document.getElementById(id);
+    const keep = sel.value;
+    sel.innerHTML = `<option value="">${label}</option>` +
+        [...new Set(values)].filter(Boolean).sort().map(v => `<option>${_esc(v)}</option>`).join('');
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+
+async function loadTrail() {
+    const body = document.getElementById('trailBody');
+    body.innerHTML = '<tr><td colspan="7" class="aud-loading">Loading…</td></tr>';
+    const params = new URLSearchParams({
+        from_date: document.getElementById('trailFromDate').value,
+        to_date:   document.getElementById('trailToDate').value,
+    });
+    try {
+        const res = await fetch(`/api/module/AUD01/trail?${params}`);
+        const data = await res.json();
+        if (data.error) { body.innerHTML = `<tr><td colspan="7" class="aud-loading">Error: ${_esc(data.error)}</td></tr>`; return; }
+        _trailRows = data.rows || [];
+        _trailRows.truncated = data.truncated;
+        document.getElementById('trailFromDate').value = data.from_date;
+        document.getElementById('trailToDate').value = data.to_date;
+        _fillSelect('trailModule', 'All modules', _trailRows.map(r => r.module_code));
+        _fillSelect('trailAction', 'All actions', _trailRows.map(r => r.action));
+        renderTrail();
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="7" class="aud-loading">Failed to load: ${_esc(e.message)}</td></tr>`;
+    }
+}
+
+function _filteredTrail() {
+    const src = document.getElementById('trailSource').value;
+    const mod = document.getElementById('trailModule').value;
+    const act = document.getElementById('trailAction').value;
+    const q   = document.getElementById('trailSearch').value.trim().toLowerCase();
+    return _trailRows.filter(r =>
+        (!src || r.source === src) && (!mod || r.module_code === mod) && (!act || r.action === act) &&
+        (!q || [r.ref, r.record_id, r.action, r.by_user, r.comment, r.module_code]
+                 .join(' ').toLowerCase().includes(q)));
+}
+
+function renderTrail() {
+    const rows = _filteredTrail();
+    document.getElementById('trailCount').textContent =
+        `${rows.length.toLocaleString()} of ${_trailRows.length.toLocaleString()} entries` +
+        (_trailRows.truncated ? ' (capped — narrow the dates)' : '');
+    const body = document.getElementById('trailBody');
+    if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);padding:20px;">No audit entries match.</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.slice(0, 2000).map(r => `<tr>
+        <td style="white-space:nowrap;font-size:11px;color:var(--text-secondary);">${_esc(r.ts)}</td>
+        <td style="font-size:11px;white-space:nowrap;">${_esc(r.source)}</td>
+        <td style="font-size:11px;font-weight:600;">${_esc(r.module_code)}</td>
+        <td style="font-size:11px;white-space:nowrap;">${_esc(r.ref || '')}${r.record_id != null
+            ? `<span style="color:var(--text-secondary);display:block;font-size:10px;">id ${_esc(r.record_id)}</span>` : ''}</td>
+        <td style="font-size:11px;white-space:nowrap;font-weight:600;">${_esc(r.action)}</td>
+        <td style="font-size:11px;white-space:nowrap;">${_esc(r.by_user)}</td>
+        <td class="aud-comment">${_esc(r.comment)}</td>
+    </tr>`).join('') + (rows.length > 2000
+        ? `<tr><td colspan="7" style="text-align:center;color:var(--text-secondary);font-size:11px;padding:10px;">
+             Showing first 2,000 of ${rows.length.toLocaleString()} — use Export CSV for all.</td></tr>` : '');
+}
+
+function exportTrailCsv() {
+    const cols = ['ts', 'source', 'module_code', 'ref', 'record_id', 'action', 'by_user', 'comment'];
+    const head = ['When', 'Table', 'Module', 'Document', 'Record ID', 'Action', 'By', 'Comment / Details'];
+    const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [head, ..._filteredTrail().map(r => cols.map(c => r[c]))]
+        .map(row => row.map(cell).join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + csv], {type: 'text/csv'}));
+    a.download = `audit_trail_${document.getElementById('trailFromDate').value}_${document.getElementById('trailToDate').value}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 _initDates();
+document.getElementById('trailToDate').value = _todayStr();
+document.getElementById('trailFromDate').value = _daysAgoStr(29);
 loadAuditData();
 </script>
 {% endblock %}

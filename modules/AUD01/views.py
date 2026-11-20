@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for, Response
 from functools import wraps
-from database import get_module_config, get_user_permissions
+from database import get_module_config, get_user_permissions, get_db, get_cursor
 from datetime import datetime, timedelta
 import re
 import os
@@ -231,6 +231,61 @@ def get_data():
     return jsonify({
         'entries': entries,
         'stats': stats,
+        'from_date': from_dt.strftime('%Y-%m-%d'),
+        'to_date': to_dt.strftime('%Y-%m-%d'),
+    })
+
+
+# DB audit tables, merged into one timeline. record_id is resolved to the
+# document number per module so the trail reads without a second lookup.
+# FIN01 'Cargo released' rows carry a cargo line id, not a bill id.
+# integration_logs has its own screen (FLOG01), so it isn't repeated here.
+_TRAIL_SQL = '''
+    SELECT * FROM (
+        SELECT 'Approval Log' AS source, al.module_code, al.record_id, al.action,
+               al.comment, al.actioned_by AS by_user, al.actioned_at AS ts,
+               CASE al.module_code
+                 WHEN 'MBC01'  THEN (SELECT doc_num || ' · ' || COALESCE(mbc_name, '')
+                                       FROM mbc_header WHERE id = al.record_id)
+                 WHEN 'VCN01'  THEN (SELECT vcn_doc_num || ' · ' || COALESCE(vessel_name, '')
+                                       FROM vcn_header WHERE id = al.record_id)
+                 WHEN 'LDUD01' THEN (SELECT doc_num FROM ldud_header WHERE id = al.record_id)
+                 WHEN 'FINV01' THEN (SELECT invoice_number FROM invoice_header WHERE id = al.record_id)
+                 WHEN 'FIN01'  THEN CASE WHEN al.action ILIKE 'Cargo released%%' THEN NULL
+                                    ELSE (SELECT bill_number FROM bill_header WHERE id = al.record_id) END
+               END AS ref
+        FROM approval_log al
+        UNION ALL
+        SELECT 'Cutover Audit', 'CUTOVER', NULL, action, details::text,
+               performed_by, performed_at, NULL
+        FROM cutover_audit
+    ) t
+    WHERE ts BETWEEN %s AND %s
+    ORDER BY ts DESC
+    LIMIT %s
+'''
+_TRAIL_LIMIT = 5000  # ponytail: hard row cap; add paging if a month ever exceeds it
+
+
+@bp.route('/api/module/AUD01/trail')
+@login_required
+def get_trail():
+    if not get_perms().get('can_read'):
+        return jsonify({'error': 'No permission'}), 403
+    to_dt = _parse_date_param(request.args.get('to_date'), datetime.now()).replace(hour=23, minute=59, second=59)
+    from_dt = _parse_date_param(request.args.get('from_date'), to_dt - timedelta(days=29)).replace(hour=0, minute=0, second=0)
+    conn = get_db()
+    try:
+        cur = get_cursor(conn)
+        cur.execute(_TRAIL_SQL, (from_dt, to_dt, _TRAIL_LIMIT + 1))
+        rows = [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    for r in rows:
+        r['ts'] = r['ts'].strftime('%d-%m-%Y %H:%M:%S') if r['ts'] else ''
+    return jsonify({
+        'rows': rows[:_TRAIL_LIMIT],
+        'truncated': len(rows) > _TRAIL_LIMIT,
         'from_date': from_dt.strftime('%Y-%m-%d'),
         'to_date': to_dt.strftime('%Y-%m-%d'),
     })
