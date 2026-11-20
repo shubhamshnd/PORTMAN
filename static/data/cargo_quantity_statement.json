@@ -9405,8 +9405,8 @@
       {
         "index": 3,
         "col_letter": "C",
-        "key": "lumps",
-        "label": "Lumps",
+        "key": "clo",
+        "label": "CLO",
         "group": "IBRM",
         "is_subtotal": false
       },
@@ -9421,24 +9421,24 @@
       {
         "index": 5,
         "col_letter": "E",
-        "key": "pellet_loading",
-        "label": "Pellet Loading",
-        "group": "IBRM",
-        "is_subtotal": false
-      },
-      {
-        "index": 6,
-        "col_letter": "F",
         "key": "hbi",
         "label": "HBI",
         "group": "IBRM",
         "is_subtotal": false
       },
       {
+        "index": 6,
+        "col_letter": "F",
+        "key": "pyrite",
+        "label": "Pyrite",
+        "group": "IBRM",
+        "is_subtotal": false
+      },
+      {
         "index": 7,
         "col_letter": "G",
-        "key": "scrap",
-        "label": "Scrap",
+        "key": "hmgp",
+        "label": "HMGP",
         "group": "IBRM",
         "is_subtotal": false
       },
@@ -9565,8 +9565,8 @@
       {
         "index": 23,
         "col_letter": "W",
-        "key": "mgp_loading",
-        "label": "MGP (Pig Iron) Loading",
+        "key": "ggbs_loading",
+        "label": "GGBS Loading",
         "group": null,
         "is_subtotal": false
       },
@@ -9631,11 +9631,8 @@
       {
         "month": "Apr-26",
         "ore_fines": 1128945,
-        "lumps": 117273,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 9300,
-        "scrap": 0,
         "ibrm_total": 1255518,
         "limestone": 149650,
         "pyroxinite": 0,
@@ -9658,16 +9655,16 @@
         "sub_total": 2055152,
         "double_handling": 0,
         "grand_total": 2055152,
-        "mgp_loading": 0
+        "clo": 117273,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "May-26",
         "ore_fines": 1114273,
-        "lumps": 182645,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 92934,
-        "scrap": 0,
         "ibrm_total": 1389852,
         "limestone": 176150,
         "pyroxinite": 0,
@@ -9690,16 +9687,16 @@
         "sub_total": 2220765,
         "double_handling": 0,
         "grand_total": 2220765,
-        "mgp_loading": 0
+        "clo": 182645,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Jun-26",
         "ore_fines": 1081149,
-        "lumps": 35392,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 45000,
-        "scrap": 0,
         "ibrm_total": 1161541,
         "limestone": 257010,
         "pyroxinite": 0,
@@ -9722,16 +9719,16 @@
         "sub_total": 2146054,
         "double_handling": 0,
         "grand_total": 2146054,
-        "mgp_loading": 0
+        "clo": 35392,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Jul-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9754,16 +9751,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Aug-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9786,16 +9783,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Sep-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9818,16 +9815,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Oct-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9850,16 +9847,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Nov-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9882,16 +9879,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Dec-26",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9914,16 +9911,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Jan-27",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9946,16 +9943,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Feb-27",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -9978,16 +9975,16 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       },
       {
         "month": "Mar-27",
         "ore_fines": 0,
-        "lumps": 0,
         "pellets": 0,
-        "pellet_loading": 0,
         "hbi": 0,
-        "scrap": 0,
         "ibrm_total": 0,
         "limestone": 0,
         "pyroxinite": 0,
@@ -10010,7 +10007,10 @@
         "sub_total": 0,
         "double_handling": 0,
         "grand_total": 0,
-        "mgp_loading": 0
+        "clo": 0,
+        "pyrite": 0,
+        "hmgp": 0,
+        "ggbs_loading": 0
       }
     ],
     "totals": {

@@ -577,15 +577,20 @@
                     field: "trip_number",
                     visible: false
                 },
-                {title: "Doc Date", field: "doc_date", width: 120, editor: canEdit ? "input" : false, cellEdited: function(cell) { markDirty(cell.getRow()); }},
+                {title: "Doc Date", field: "doc_date", width: 160, editor: canEdit ? bgtDatetimeEditor : false, formatter: bgtDatetimeCellFormatter, cellEdited: function(cell) {
+                    if (!validateDateTimeFormat(cell)) return;
+                    markDirty(cell.getRow());
+                }},
                 {title: "Cargo Name", field: "cargo_name", width: 170, editor: false},
                 {
                     title: "Status",
                     field: "doc_status",
                     width: 100,
                     hozAlign: "center",
+                    visible: false,
                     formatter: function(cell) {
-                        const val = cell.getValue() || 'Draft';
+                        const val = cell.getValue();
+                        if (!val) return '';
                         const cls = val === 'Approved' ? 'status-approved' : 'status-draft';
                         return `<span class="status-badge ${cls}">${val}</span>`;
                     }
@@ -596,11 +601,15 @@
     }
 
     function addRow() {
-        const today = new Date().toISOString().slice(0, 10);
         table.addRow({
-            doc_date: today,
-            doc_status: 'Draft',
-            created_by: '{{ session.get("username", "admin") }}'
+            doc_date: '',
+            doc_status: '',
+            vcn_doc_num: '',
+            vessel_name: '',
+            barge_name: '',
+            trip_number: '',
+            cargo_name: '',
+            created_by: ''
         }, true);
         markDirty();
         const curRows = table.getData().length;
@@ -612,10 +621,47 @@
 
     async function saveAll() {
         const rows = table.getRows();
-        let savedCount = 0;
+
+        // 1. Identify rows to save (only new or modified rows)
+        const rowsToSave = [];
         for (const row of rows) {
             const data = row.getData();
-            if (!data.vcn_doc_num && !data.vessel_name && !data.barge_name) continue;
+            const isNew = !data.id;
+            const isDirty = isNew || dirtyRowIds.has(String(data.id));
+            if (!isDirty) continue;
+
+            // Required field validation
+            if (!data.doc_date || !String(data.doc_date).trim()) {
+                alert('Please enter a Date before saving.');
+                return;
+            }
+            if (!data.vcn_doc_num && !data.vessel_name && !data.barge_name) {
+                alert('Please select a VCN Doc Num or Barge before saving.');
+                return;
+            }
+            rowsToSave.push(row);
+        }
+
+        if (rowsToSave.length === 0) {
+            return;
+        }
+
+        let savedCount = 0;
+        for (const row of rowsToSave) {
+            const data = row.getData();
+            if (!data.doc_status) data.doc_status = 'Draft';
+            if (!data.created_by) data.created_by = '{{ session.get("username", "admin") }}';
+
+            // Convert DD-MM-YYYY or DD-MM-YYYY HH:MM to storage format
+            if (data.doc_date) {
+                const s = String(data.doc_date).trim().replace(' IST', '');
+                const m = s.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT]+(\d{2}):(\d{2}))?/);
+                if (m) {
+                    const timePart = (m[4] && m[5]) ? `T${m[4]}:${m[5]}` : '';
+                    data.doc_date = `${m[3]}-${m[2]}-${m[1]}${timePart}`;
+                }
+            }
+
             try {
                 const res = await fetch('/api/module/BGT01/save', {
                     method: 'POST',
@@ -624,8 +670,11 @@
                 });
                 const resData = await res.json();
                 if (resData.success) {
-                    row.update({ id: resData.id });
+                    row.update({ id: resData.id, doc_status: resData.doc_status || data.doc_status });
                     savedCount++;
+                } else if (resData.error) {
+                    alert(`Error saving row: ${resData.error}`);
+                    return;
                 }
             } catch(e) {
                 console.error('Error saving row:', e);
@@ -635,9 +684,11 @@
         dirtyRowIds.clear();
         document.getElementById('unsavedBanner').style.display = 'none';
         const st = document.getElementById('saveStatus');
-        st.textContent = '✓ Saved successfully!';
-        setTimeout(() => { st.textContent = ''; }, 3000);
-        table.setData();
+        if (st) {
+            st.textContent = `✓ ${savedCount} row(s) saved successfully!`;
+            setTimeout(() => { st.textContent = ''; }, 3000);
+        }
+        await table.setData();
     }
 
     async function deleteSelected() {
@@ -692,99 +743,141 @@
         }
     });
 
-    function formatDateTimeDisplay(val) {
-        if (!val) return '';
-        const clean = String(val).replace('T', ' ').trim();
-        const parts = clean.split(' ');
-        if (parts.length >= 2) {
-            const d = parts[0].split('-');
-            if (d.length === 3) {
-                if (d[0].length === 4) { // YYYY-MM-DD
-                    return `${d[2]}-${d[1]}-${d[0]} ${parts[1].slice(0, 5)}`;
-                }
-                return clean;
-            }
-        } else if (parts[0].includes('-')) {
-            const d = parts[0].split('-');
-            if (d.length === 3 && d[0].length === 4) {
-                return `${d[2]}-${d[1]}-${d[0]}`;
-            }
+    // datetimeEditor and dateEditor are global from base.html
+    const dtFmt = datetimeCellFormatter;
+
+    // Strict datetime parser (matches LDUD01 parseValidDateTime)
+    function parseValidDateTime(value) {
+        if (!value) return null;
+        const str = String(value).trim();
+        if (!str) return null;
+
+        let day, month, year, hour, minute, second = 0;
+
+        // DD-MM-YYYY HH:mm[:ss] [IST]
+        let match = str.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?(?:\s+IST)?$/i);
+        if (match) {
+            day = Number(match[1]);
+            month = Number(match[2]);
+            year = Number(match[3]);
+            hour = Number(match[4]);
+            minute = Number(match[5]);
+            second = Number(match[6] || 0);
+        } else {
+            // YYYY-MM-DD[ T]HH:mm[:ss]
+            match = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+            if (!match) return null;
+            year = Number(match[1]);
+            month = Number(match[2]);
+            day = Number(match[3]);
+            hour = Number(match[4]);
+            minute = Number(match[5]);
+            second = Number(match[6] || 0);
         }
-        return val;
+
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+            return null;
+        }
+
+        const date = new Date(year, month - 1, day, hour, minute, second);
+        if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) {
+            return null;
+        }
+        return date;
     }
 
-    var datetimeLocalEditor = function(cell, onRendered, success, cancel) {
-        var raw = cell.getValue() || '';
-        var input = document.createElement("input");
-        input.type = "datetime-local";
-        input.style.width = "100%";
-        input.style.boxSizing = "border-box";
-        input.style.padding = "4px";
-        input.style.fontSize = "12px";
-        input.style.fontFamily = "inherit";
+    // Strict date-only parser
+    function parseValidDate(value) {
+        if (!value) return null;
+        const str = String(value).trim();
+        if (!str) return null;
 
-        // Convert stored format to YYYY-MM-DDTHH:mm for datetime-local picker
-        if (raw) {
-            var str = String(raw).trim();
-            if (str.includes('T')) {
-                input.value = str.slice(0, 16);
-            } else if (str.includes(' ')) {
-                var p = str.split(' ');
-                var d = p[0].split('-');
-                var t = (p[1] || '00:00').slice(0, 5);
-                if (d.length === 3) {
-                    if (d[0].length === 4) { // YYYY-MM-DD
-                        input.value = `${d[0]}-${d[1].padStart(2,'0')}-${d[2].padStart(2,'0')}T${t}`;
-                    } else { // DD-MM-YYYY
-                        input.value = `${d[2]}-${d[1].padStart(2,'0')}-${d[0].padStart(2,'0')}T${t}`;
-                    }
-                }
-            } else if (str.includes('-')) {
-                var d = str.split('-');
-                if (d.length === 3) {
-                    if (d[0].length === 4) input.value = `${str}T00:00`;
-                    else input.value = `${d[2]}-${d[1].padStart(2,'0')}-${d[0].padStart(2,'0')}T00:00`;
-                }
-            }
+        let day, month, year;
+        let match = str.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (match) {
+            day = Number(match[1]);
+            month = Number(match[2]);
+            year = Number(match[3]);
         } else {
-            const now = new Date();
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-            const h = String(now.getHours()).padStart(2, '0');
-            const min = String(now.getMinutes()).padStart(2, '0');
-            input.value = `${y}-${m}-${day}T${h}:${min}`;
+            match = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!match) return null;
+            year = Number(match[1]);
+            month = Number(match[2]);
+            day = Number(match[3]);
         }
 
-        var resolved = false;
-        function finish(val) {
-            if (resolved) return;
-            resolved = true;
-            success(val);
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+        const date = new Date(year, month - 1, day);
+        if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+            return null;
         }
+        return date;
+    }
 
-        onRendered(function() {
-            input.focus();
-            if (typeof input.showPicker === 'function') {
-                try { input.showPicker(); } catch(e){}
+    const bgtDatetimeEditor = function(cell, onRendered, success, cancel) {
+        let val = cell.getValue();
+        if (val) {
+            let s = String(val).trim().replace(' IST', '');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                val = s + 'T00:00';
+            } else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+                const p = s.split('-');
+                val = `${p[2]}-${p[1]}-${p[0]}T00:00`;
+            } else if (/^\d{2}-\d{2}-\d{4}\s+(\d{2}):(\d{2})/.test(s)) {
+                const m = s.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})/);
+                val = `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}`;
             }
-        });
-
-        input.addEventListener("change", function() { finish(input.value); });
-        input.addEventListener("blur", function() { finish(input.value); });
-        input.addEventListener("keydown", function(e) {
-            if (e.key === "Enter") finish(input.value);
-            if (e.key === "Escape") { resolved = true; cancel(); }
-        });
-        return input;
+        }
+        const cellProxy = Object.create(cell);
+        cellProxy.getValue = () => val;
+        return datetimeEditor(cellProxy, onRendered, success, cancel);
     };
+
+    function bgtDatetimeCellFormatter(cell) {
+        let val = cell.getValue();
+        if (!val) return '';
+        let s = String(val).trim();
+        if (s.includes('IST')) return s;
+        if (!s.includes(':')) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+                s += 'T00:00';
+            } else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+                const p = s.split('-');
+                s = `${p[2]}-${p[1]}-${p[0]}T00:00`;
+            }
+        }
+        return formatDateTime(s);
+    }
+
+    // Field-level validation functions (referencing LDUD01 validateBargeDateFormat)
+    function validateDateTimeFormat(cell) {
+        const value = cell.getValue();
+        if (!value) return true;
+        if (!parseValidDateTime(value)) {
+            alert('Invalid date/time.\n\nPlease enter a valid date and time (e.g., DD-MM-YYYY HH:mm).');
+            cell.setValue(cell.getOldValue(), true);
+            return false;
+        }
+        return true;
+    }
+
+    function validateDateFormat(cell) {
+        const value = cell.getValue();
+        if (!value) return true;
+        if (!parseValidDate(value)) {
+            alert('Invalid date.\n\nPlease enter a valid date (e.g., DD-MM-YYYY).');
+            cell.setValue(cell.getOldValue(), true);
+            return false;
+        }
+        return true;
+    }
 
     function calculateRunningHours(startStr, stopStr) {
         if (!startStr || !stopStr) return '0';
         try {
-            const start = new Date(startStr);
-            const stop = new Date(stopStr);
-            if (isNaN(start.getTime()) || isNaN(stop.getTime()) || stop < start) return '0';
+            const start = parseValidDateTime(startStr);
+            const stop = parseValidDateTime(stopStr);
+            if (!start || !stop || stop < start) return '0';
             const diffMs = stop - start;
             const diffMins = Math.floor(diffMs / 60000);
             const days = Math.floor(diffMins / (24 * 60));
@@ -815,8 +908,8 @@
             const row = {
                 id: act.id,
                 header_id: act.header_id,
-                movement_date: act.movement_date || currentHeaderData.doc_date,
-                activity: act.activity,
+                movement_date: act.movement_date || '',
+                activity: act.activity || '',
                 from_berth: act.from_berth,
                 to_berth: act.to_berth,
                 marine_officer: act.marine_officer,
@@ -838,11 +931,14 @@
             {
                 title: "Date & Time",
                 field: "movement_date",
-                width: 155,
-                editor: canEdit ? datetimeLocalEditor : false,
+                width: 170,
+                editor: canEdit ? datetimeEditor : false,
                 formatter: function(cell) {
                     const val = cell.getValue();
-                    return `<span style="font-weight:600;">${formatDateTimeDisplay(val)}</span>`;
+                    return `<span style="font-weight:600;">${formatDateTime(val)}</span>`;
+                },
+                cellEdited: function(cell) {
+                    if (!validateDateTimeFormat(cell)) return;
                 }
             },
             {
@@ -899,30 +995,46 @@
                     {
                         title: "Engine Start",
                         field: `${tk}__engine_start`,
-                        width: 145,
-                        editor: canEdit ? datetimeLocalEditor : false,
-                        formatter: function(cell) {
-                            return formatDateTimeDisplay(cell.getValue());
-                        },
+                        width: 165,
+                        editor: canEdit ? datetimeEditor : false,
+                        formatter: dtFmt,
                         cellEdited: function(cell) {
+                            if (!validateDateTimeFormat(cell)) return;
                             const r = cell.getRow();
                             const st = cell.getValue();
                             const sp = r.getData()[`${tk}__engine_stop`];
+                            if (st && sp) {
+                                const dStart = parseValidDateTime(st);
+                                const dStop = parseValidDateTime(sp);
+                                if (dStart && dStop && dStop < dStart) {
+                                    alert('Engine Start cannot be later than Engine Stop.');
+                                    cell.setValue(cell.getOldValue(), true);
+                                    return;
+                                }
+                            }
                             r.update({ [`${tk}__t_running_hours`]: calculateRunningHours(st, sp) });
                         }
                     },
                     {
                         title: "Engine Stop",
                         field: `${tk}__engine_stop`,
-                        width: 145,
-                        editor: canEdit ? datetimeLocalEditor : false,
-                        formatter: function(cell) {
-                            return formatDateTimeDisplay(cell.getValue());
-                        },
+                        width: 165,
+                        editor: canEdit ? datetimeEditor : false,
+                        formatter: dtFmt,
                         cellEdited: function(cell) {
+                            if (!validateDateTimeFormat(cell)) return;
                             const r = cell.getRow();
                             const sp = cell.getValue();
                             const st = r.getData()[`${tk}__engine_start`];
+                            if (st && sp) {
+                                const dStart = parseValidDateTime(st);
+                                const dStop = parseValidDateTime(sp);
+                                if (dStart && dStop && dStop < dStart) {
+                                    alert('Engine Stop cannot be earlier than Engine Start.');
+                                    cell.setValue(cell.getOldValue(), true);
+                                    return;
+                                }
+                            }
                             r.update({ [`${tk}__t_running_hours`]: calculateRunningHours(st, sp) });
                         }
                     },
@@ -999,27 +1111,30 @@
 
     function addActivityRow() {
         if (!activityTable) return;
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const h = String(now.getHours()).padStart(2, '0');
-        const min = String(now.getMinutes()).padStart(2, '0');
-        const defaultDateTime = (currentHeaderData && currentHeaderData.doc_date)
-            ? (currentHeaderData.doc_date.includes('T') ? currentHeaderData.doc_date : `${currentHeaderData.doc_date}T${h}:${min}`)
-            : `${y}-${m}-${day}T${h}:${min}`;
-
         activityTable.addRow({
             header_id: currentHeaderId,
-            movement_date: defaultDateTime,
-            activity: 'Berthing',
-            marine_officer: ''
+            movement_date: '',
+            activity: '',
+            from_berth: '',
+            to_berth: '',
+            marine_officer: '',
+            remark: ''
         }, true);
     }
 
     async function saveActivities() {
         if (!activityTable) return;
         const rows = activityTable.getRows();
+        if (rows.length === 0) return;
+
+        for (let i = 0; i < rows.length; i++) {
+            const data = rows[i].getData();
+            if (!data.movement_date || !String(data.movement_date).trim()) {
+                alert(`Row ${i + 1}: Please enter Date & Time before saving.`);
+                return;
+            }
+        }
+
         const tugList = masters.tugs && masters.tugs.length > 0 ? masters.tugs : ['Tug Ocen Almir', 'Tug Mehul'];
 
         let savedCount = 0;

@@ -750,57 +750,7 @@ async function loadAvailableDocs() {
         initTable();
     }
 
-    // datetimeEditor and dateEditor are now global (defined in base.html), but we override datetimeEditor here for immediate validation
-    var datetimeEditor = function(cell, onRendered, success, cancel) {
-        var cellValue = cell.getValue() || '';
-        var input = document.createElement("input");
-        input.type = "text";
-        input.placeholder = "DD-MM-YYYY HH:MM";
-        input.maxLength = 16;
-        input.value = _dbToDisplay(cellValue);
-        input.style.width = "100%";
-        input.style.boxSizing = "border-box";
-        input.style.padding = "4px";
-        input.style.fontFamily = "monospace";
-        input.style.fontSize = "12px";
-        var resolved = false;
-
-        _maskDatetime(input);
-
-        function complete() {
-            if (resolved) return;
-            resolved = true;
-            
-            var rawInput = input.value.trim();
-            if (!rawInput) {
-                success('');
-                return;
-            }
-            
-            var dbVal = _displayToDb(rawInput);
-            if (!dbVal) {
-                alert('Invalid date/time format.\n\nPlease enter a valid date and time (e.g., DD-MM-YYYY HH:mm).');
-                cancel();
-                return;
-            }
-            
-            if (!parseValidationDate(dbVal)) {
-                alert('Invalid date/time.\n\nPlease enter a valid date and time (e.g., DD-MM-YYYY HH:mm).');
-                cancel();
-                return;
-            }
-            
-            success(dbVal);
-        }
-
-        onRendered(function() { input.focus(); input.select(); input.style.height = "100%"; });
-        input.addEventListener("blur", function() { complete(); });
-        input.addEventListener("keydown", function(e) {
-            if (e.key === "Enter") complete();
-            if (e.key === "Escape") { resolved = true; cancel(); }
-        });
-        return input;
-    };
+    // datetimeEditor and dateEditor are now global (defined in base.html)
 
     let isApprover = false;
     const isAdmin = {{ 'true' if session.get('is_admin') else 'false' }};
@@ -907,7 +857,7 @@ async function loadAvailableDocs() {
             },
             {title: "Doc Series", field: "doc_series", editor: false, width: 100,
                 editorParams: {values: dsOptions, autocomplete: true, allowEmpty: true}},
-            {title: "Doc Date", field: "doc_date", width: 100, editor: false},
+            {title: "Doc Date", field: "doc_date", width: 110, editor: false, formatter: dateCellFormatter},
             {title: "MBC Name", field: "mbc_name", editor: false, width: 120,
                 editorParams: {values: mbcOptions, autocomplete: true, allowEmpty: true}},
             {title: "Load Port", field: "load_port", editor: false, width: 120,
@@ -926,9 +876,10 @@ async function loadAvailableDocs() {
                 editorParams: {min: 0, step: 0.01}},
             {title: "UOM", field: "quantity_uom", editor: false, width: 70,
                 editorParams: {values: uomOptions, autocomplete: true, allowEmpty: true}},
-            {title: "Status", field: "doc_status", width: 105, headerSort: false,
+            {title: "Status", field: "doc_status", width: 105, headerSort: false, visible: false,
                 formatter: function(cell) {
-                    const val = cell.getValue() || 'Draft';
+                    const val = cell.getValue();
+                    if (!val) return '';
                     const id = cell.getRow().getData().id;
                     let color, bg;
                     if (val === 'Approved') { color = '#276749'; bg = '#c6f6d5'; }
@@ -937,7 +888,24 @@ async function loadAvailableDocs() {
                     return `<span class="approval-badge" style="background:${bg};color:${color};" ${click} title="Click for history">${val}</span>`;
                 }
             },
-            {title: "Created By", field: "created_by", width: 90},
+            {
+                title: "Created By", 
+                field: "created_by", 
+                width: 100,
+                formatter: function(cell) {
+                    let val = cell.getValue();
+                    if (!val) return '';
+                    if (typeof val === 'string' && val.trim().startsWith('{')) {
+                        try {
+                            val = JSON.parse(val);
+                        } catch(e) {}
+                    }
+                    if (typeof val === 'object' && val !== null) {
+                        return val.username || val.user_id || val.id || '';
+                    }
+                    return val;
+                }
+            },
             {
                 title: "Proof of Qty", field: "_proof_doc_id", width: 150, headerSort: false, visible: false,
                 formatter: function(cell) {
@@ -2390,12 +2358,27 @@ if (type === 'cleaning') {
     function addRow() {
         table.addRow({
             created_by: currentUser,
-            created_date: getTodayDate(),
-            doc_date: getTodayDate(),
-            doc_status: 'Draft',
-            doc_series: defaultDocSeries,
-            quantity_uom: defaultUom
+            created_date: '',
+            doc_date: '',
+            doc_status: '',
+            doc_series: '',
+            quantity_uom: '',
+            doc_num: '',
+            mbc_id: '',
+            mbc_name: '',
+            load_port: '',
+            cargo_type: '',
+            cargo_name: '',
+            bl_quantity: ''
         }, true);
+        markDirty();
+        const curRows = table.getData().length;
+        const totalEl = document.getElementById('totalCount');
+        if (totalEl) {
+            const total = Math.max(curRows, (parseInt(totalEl.textContent) || 0) + 1);
+            document.getElementById('rowCount').textContent = curRows;
+            totalEl.textContent = total;
+        }
     }
 
     function deleteSelected() {
@@ -2426,10 +2409,38 @@ if (type === 'cleaning') {
         try {
             showStatus('Saving...', 'saving');
             const rows = table.getRows();
-            let savedCount = 0, errorMsg = '';
+
+            // 1. Identify rows to save (only new or modified rows)
+            const rowsToSave = [];
             for (const row of rows) {
                 const data = row.getData();
-                if (data.id && !dirtyRowIds.has(String(data.id))) continue;
+                const isNew = !data.id;
+                const isDirty = isNew || dirtyRowIds.has(String(data.id));
+                if (!isDirty) continue;
+
+                // Validation: MBC Timings requires an MBC Doc Num
+                if (!data.mbc_id && !data.doc_num) {
+                    alert('Please select an MBC Doc Num before saving.');
+                    hideUnsavedBanner();
+                    showStatus('', '');
+                    return;
+                }
+                rowsToSave.push(row);
+            }
+
+            if (rowsToSave.length === 0) {
+                showStatus('', '');
+                return;
+            }
+
+            let savedCount = 0, errorMsg = '';
+            for (const row of rowsToSave) {
+                const data = row.getData();
+                if (!data.created_by) data.created_by = currentUser;
+                if (!data.doc_status) data.doc_status = 'Draft';
+                if (!data.doc_series) data.doc_series = defaultDocSeries;
+                if (!data.quantity_uom) data.quantity_uom = defaultUom;
+
                 const res = await fetch("/api/module/MBCT01/save", {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -2437,7 +2448,7 @@ if (type === 'cleaning') {
                 });
                 const result = await res.json();
                 if (result.id) {
-                    row.update({id: result.id, doc_num: result.doc_num, doc_status: result.doc_status});
+                    row.update({id: result.id, doc_num: result.doc_num, doc_status: result.doc_status || 'Draft'});
                     savedCount++;
                 } else if (result.error && !errorMsg) {
                     errorMsg = result.error;
@@ -2445,6 +2456,7 @@ if (type === 'cleaning') {
             }
             if (errorMsg && savedCount === 0) {
                 showStatus(errorMsg, 'unsaved');
+                alert(errorMsg);
             } else {
                 dirtyRowIds.clear();
                 showStatus(`Saved ${savedCount} row(s)`, 'saved');
