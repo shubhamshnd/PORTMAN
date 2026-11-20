@@ -423,15 +423,17 @@
         </div>
     </div>
 </div>
-<!-- Change Customer (approved, unbilled line) Modal -->
+<!-- Change Customer / PO (approved, unbilled line) Modal -->
 <div id="changeCustModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">
     <div style="background:white;color:#1a202c;border-radius:8px;padding:24px;max-width:420px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
-        <h3 style="margin:0 0 14px;font-size:16px;font-weight:600;">Change Customer</h3>
+        <h3 style="margin:0 0 14px;font-size:16px;font-weight:600;">Change Customer / PO</h3>
         <div id="changeCustCurrent" style="font-size:12px;color:#4a5568;margin-bottom:10px;"></div>
-        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">New Customer <span style="color:#e53e3e">*</span></label>
+        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Customer <span style="color:#e53e3e">*</span></label>
         <select id="changeCustSelect" style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-bottom:12px;"></select>
+        <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Material PO <span style="color:#e53e3e">*</span></label>
+        <input id="changeCustPO" type="text" style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-bottom:12px;">
         <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:500;">Reason <span style="color:#e53e3e">*</span></label>
-        <textarea id="changeCustReason" rows="3" placeholder="Why is the customer being changed?" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;resize:vertical;"></textarea>
+        <textarea id="changeCustReason" rows="3" placeholder="Why is the customer / PO being changed?" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;resize:vertical;"></textarea>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
             <button onclick="closeChangeCustModal()" style="padding:6px 18px;border:1px solid #cbd5e0;background:white;border-radius:4px;cursor:pointer;font-size:13px;">Cancel</button>
             <button onclick="confirmChangeCust()" style="padding:6px 18px;background:#2b6cb0;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;">Change</button>
@@ -1237,10 +1239,10 @@
                 {title: "Material PO", field: "material_po", width: 150, editor: canEdit ? "input" : false},
                 delBtn('customer_details'),
                 // Read-only (approved / partly billed) MBC: unbilled lines can still be re-pointed, with a reason.
-                (permissions.can_edit && !canEdit) ? {title: "", field: "_lock", width: 120, hozAlign: "center",
+                (permissions.can_edit && !canEdit) ? {title: "", field: "_lock", width: 160, hozAlign: "center",
                     formatter: cell => cell.getValue()
                         ? `<span style="font-size:11px;color:#744210;">🔒 ${cell.getValue() === 'invoiced' ? 'Invoiced' : 'Billed'}</span>`
-                        : `<button class="btn-sub-add" style="font-size:11px;">Change Customer</button>`,
+                        : `<button class="btn-sub-add" style="font-size:11px;">Change Customer / PO</button>`,
                     cellClick: (e, cell) => { if (!cell.getValue()) openChangeCustModal(mbcId, cell.getRow().getData()); }
                 } : null
             ].filter(Boolean)
@@ -2111,11 +2113,12 @@ if (type === 'cleaning') {
     function openChangeCustModal(mbcId, line) {
         changeCustTarget = {mbcId, id: line.id};
         document.getElementById('changeCustCurrent').textContent =
-            `Current: ${line.customer_name || '-'} · ${line.cargo_name || ''} · Qty ${line.quantity ?? ''}`;
+            `Current: ${line.customer_name || '-'} · PO ${line.material_po || '-'} · ${line.cargo_name || ''} · Qty ${line.quantity ?? ''}`;
         const sel = document.getElementById('changeCustSelect');
         sel.innerHTML = '<option value="">-- Select --</option>' + customerList
-            .filter(c => c !== line.customer_name)
             .map(c => `<option>${String(c).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('');
+        sel.value = line.customer_name || '';
+        document.getElementById('changeCustPO').value = line.material_po || '';
         document.getElementById('changeCustReason').value = '';
         document.getElementById('changeCustModal').style.display = 'flex';
     }
@@ -2127,12 +2130,14 @@ if (type === 'cleaning') {
 
     async function confirmChangeCust() {
         const customer = document.getElementById('changeCustSelect').value;
+        const po = document.getElementById('changeCustPO').value.trim();
         const reason = document.getElementById('changeCustReason').value.trim();
-        if (!customer) { alert('Please select the new customer.'); return; }
+        if (!customer) { alert('Please select the customer.'); return; }
+        if (!po) { alert('Please enter the Material PO.'); return; }
         if (!reason) { alert('Please enter a reason.'); return; }
-        const res = await fetch('/api/module/MBC01/customer_details/change_customer', {
+        const res = await fetch('/api/module/MBC01/customer_details/change_line', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id: changeCustTarget.id, customer_name: customer, reason: reason})
+            body: JSON.stringify({id: changeCustTarget.id, customer_name: customer, material_po: po, reason: reason})
         });
         const data = await res.json();
         if (data.error) { alert(data.error); return; }

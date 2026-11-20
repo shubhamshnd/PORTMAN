@@ -97,6 +97,19 @@ def test_released_line_is_open_despite_old_invoice():
     assert _line_lock(FakeCursor([None, None]), held) == 'billed'   # cutover mark
 
 
+def test_change_line_reports_only_what_moved():
+    from modules.MBC01.model import line_changes
+    line = {'customer_name': 'JSW STEEL LIMITED', 'material_po': '4300025732'}
+    assert line_changes(line, 'JSW STEEL LIMITED', '4300025732') == ('', [])
+    action, changes = line_changes(line, 'JSW STEEL LIMITED', '4500256823')
+    assert action == 'PO Changed' and changes == ['PO: 4300025732 → 4500256823']
+    action, _ = line_changes(line, 'OTHER', '4300025732')
+    assert action == 'Customer Changed'
+    action, changes = line_changes(line, 'OTHER', '4500256823')
+    assert action == 'Customer / PO Changed' and len(changes) == 2
+    assert line_changes({'customer_name': None, 'material_po': None}, 'X', 'Y')[0] == 'Customer / PO Changed'
+
+
 def test_line_scope_refused_for_vcn():
     try:
         source_lock_state(FakeCursor([]), 'VCN', 7, line_id=1)

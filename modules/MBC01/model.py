@@ -376,17 +376,31 @@ def save_customer_detail(data):
     return row_id
 
 
-def change_customer(row_id, new_customer, reason, username):
-    """Re-point one unbilled customer line at another customer, even on an
-    Approved MBC or one whose other lines are billed. Only customer_name moves;
-    the old/new pair and the reason go to approval_log.
+def line_changes(line, new_customer, new_po):
+    """What a Change Customer / PO request actually moves on one line.
+    Returns (action, [descriptions]); action is '' when nothing differs."""
+    changes, kinds = [], []
+    if new_customer != (line['customer_name'] or ''):
+        changes.append(f"Customer: {line['customer_name'] or '-'} → {new_customer}")
+        kinds.append('Customer')
+    if new_po != (line['material_po'] or ''):
+        changes.append(f"PO: {line['material_po'] or '-'} → {new_po}")
+        kinds.append('PO')
+    return (' / '.join(kinds) + ' Changed') if kinds else '', changes
+
+
+def change_line(row_id, new_customer, new_po, reason, username):
+    """Correct the customer and/or Material PO on one unbilled customer line,
+    even on an Approved MBC or one whose other lines are billed. The old/new
+    values and the reason go to approval_log. Billing reads material_po at
+    bill time, so the next bill and SAP posting pick up the new PO.
 
     Returns (ok, error_message)."""
     from modules.FIN01 import model as fin_model
     conn = get_db()
     cur = get_cursor(conn)
     try:
-        cur.execute('''SELECT id, mbc_id, customer_name, is_billed, billed_quantity, bill_id
+        cur.execute('''SELECT id, mbc_id, customer_name, material_po, is_billed, billed_quantity, bill_id
                        FROM mbc_customer_details WHERE id=%s FOR UPDATE''', (row_id,))
         line = cur.fetchone()
         if not line:
@@ -394,15 +408,16 @@ def change_customer(row_id, new_customer, reason, username):
         state = _line_lock(cur, dict(line))
         if state:
             return False, fin_model.lock_message(state, 'customer line')
-        if line['customer_name'] == new_customer:
-            return False, 'New customer is the same as the current one'
+        action, changes = line_changes(line, new_customer, new_po)
+        if not action:
+            return False, 'Nothing changed: customer and PO are the same as the current ones'
         # FK to vessel_customers.name rejects unknown names.
-        cur.execute('UPDATE mbc_customer_details SET customer_name=%s WHERE id=%s',
-                    (new_customer, row_id))
+        cur.execute('UPDATE mbc_customer_details SET customer_name=%s, material_po=%s WHERE id=%s',
+                    (new_customer, new_po, row_id))
         cur.execute("""INSERT INTO approval_log (module_code, record_id, action, comment, actioned_by)
-                       VALUES ('MBC01', %s, 'Customer Changed', %s, %s)""",
-                    (line['mbc_id'],
-                     f"Line #{row_id}: {line['customer_name'] or '-'} → {new_customer}. Reason: {reason}",
+                       VALUES ('MBC01', %s, %s, %s, %s)""",
+                    (line['mbc_id'], action,
+                     f"Line #{row_id}: {'; '.join(changes)}. Reason: {reason}",
                      username))
         conn.commit()
         return True, None

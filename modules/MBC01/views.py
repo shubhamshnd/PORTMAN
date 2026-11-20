@@ -361,22 +361,24 @@ def delete_customer_detail():
     return jsonify({'success': True})
 
 
-@bp.route('/api/module/MBC01/customer_details/change_customer', methods=['POST'])
+@bp.route('/api/module/MBC01/customer_details/change_line', methods=['POST'])
 @login_required
-def change_customer():
-    """Fix the customer on an unbilled line after approval / partial billing.
-    Bypasses the whole-MBC lock on purpose; the per-line billing lock and a
-    mandatory, logged reason stand in for it."""
+def change_line():
+    """Fix the customer and/or Material PO on an unbilled line after approval /
+    partial billing. Bypasses the whole-MBC lock on purpose; the per-line
+    billing lock and a mandatory, logged reason stand in for it."""
     if not get_perms().get('can_edit'):
         return jsonify({'error': 'No permission'}), 403
     data = request.json or {}
     row_id = data.get('id')
     new_customer = (data.get('customer_name') or '').strip()
+    new_po = (data.get('material_po') or '').strip()
     reason = (data.get('reason') or '').strip()
-    if not row_id or not new_customer or not reason:
-        return jsonify({'error': 'Customer line, new customer and reason are required'}), 400
+    # PO stays mandatory: approval requires it on every line.
+    if not row_id or not new_customer or not new_po or not reason:
+        return jsonify({'error': 'Customer line, customer, Material PO and reason are required'}), 400
     try:
-        ok, err = model.change_customer(row_id, new_customer, reason, session.get('username'))
+        ok, err = model.change_line(row_id, new_customer, new_po, reason, session.get('username'))
     except psycopg2.errors.ForeignKeyViolation:
         return jsonify({'error': f'Unknown customer: {new_customer}'}), 400
     if not ok:
