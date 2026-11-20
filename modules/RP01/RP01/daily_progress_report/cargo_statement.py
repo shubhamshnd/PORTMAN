@@ -1,7 +1,17 @@
 import json
+import math
 import os
-from openpyxl.styles import Font, Alignment, Border, Side
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.axis import ChartLines
+from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.trendline import Trendline
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.drawing.line import LineProperties
+from openpyxl.chart.text import RichText
+from openpyxl.drawing.text import RichTextProperties
 
 
 def match_category_to_column(cargo_category, cargo_type, columns):
@@ -383,5 +393,171 @@ def build_cargo_quantity_statement_sheet(wb, cur=None):
     }
     for col_let, width in col_widths.items():
         ws.column_dimensions[col_let].width = width
+
+    return ws
+
+
+def build_cargo_quantity_graph_sheet(wb):
+    """
+    Build Sheet 7: Cargo Quantity Graph.
+    Displays annual cargo throughput comparison table and column bar chart
+    with trendline matching the executive dashboard summary.
+    """
+    ws = wb.create_sheet(title="Cargo Quantity Graph")
+    ws.views.sheetView[0].showGridLines = True
+
+    yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+    thin_side = Side(style='thin', color='000000')
+    medium_side = Side(style='medium', color='000000')
+
+    table_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    font_bold = Font(name='Calibri', size=10, bold=True, color='000000')
+    font_normal = Font(name='Calibri', size=10, bold=False, color='000000')
+    align_left = Alignment(horizontal='left', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+
+    # Table data
+    data = [
+        ('FY-12-13 (half year)', 3221320),
+        ('FY-13-14', 7406280),
+        ('FY-14-15', 7381918),
+        ('FY-15-16 (B/F Shutdown)', 5955334),
+        ('FY-16-17', 10045790),
+        ('FY-17-18', 11624347),
+        ('FY-18-19', 12668782),
+        ('FY-19-20', 12839750),
+        ('FY- 20-21 (Pandemic COVID19)', 12903667),
+        ('FY- 21-22', 17206902),
+        ('FY- 22-23', 24041938),
+        ('FY- 23-24', 25144780),
+        ('FY- 24-25', 23138410),
+        ('FY- 25-26', 24532005),
+        ('FY- 26-27', "='Cargo Quantity Statement'!AD291"),
+    ]
+
+    # Chart sizing & dynamic container boundary calculation
+    max_chart_row = 18
+    num_bars = max_chart_row - 4
+    chart_width_cm = max(25.0, num_bars * 1.7 + 3.0)
+    chart_height_cm = 12.0
+
+    chart = BarChart()
+    chart.type = 'col'
+    chart.legend = None
+    chart.width = chart_width_cm
+    chart.height = chart_height_cm
+
+    chart_start_col = 8  # Column H
+    chart_start_row = 4  # Row 4
+
+    # Dynamically compute container end column so yellow background fully
+    # spans behind the graph and scales as graph width increases
+    col_width_chars = 8
+    col_width_cm = (col_width_chars * 7 + 5) * (2.54 / 96.0)
+    cols_spanned = int(math.ceil(chart.width / col_width_cm))
+    container_end_col = chart_start_col + cols_spanned + 2
+
+    # Dynamically compute container end row so yellow background frames the bottom
+    row_height_cm = 18.0 * (2.54 / 72.0)
+    rows_spanned = int(math.ceil(chart.height / row_height_cm))
+    chart_end_row = chart_start_row + rows_spanned
+    table_end_row = 4 + len(data)
+    container_end_row = max(table_end_row, chart_end_row) + 2
+
+    # Draw dynamic yellow container E3 : (container_end_col, container_end_row)
+    for r in range(3, container_end_row + 1):
+        for c in range(5, container_end_col + 1):
+            cell = ws.cell(r, c)
+            cell.fill = yellow_fill
+            top_b = medium_side if r == 3 else None
+            bot_b = medium_side if r == container_end_row else None
+            left_b = medium_side if c == 5 else None
+            right_b = medium_side if c == container_end_col else None
+            cell.border = Border(left=left_b, right=right_b, top=top_b, bottom=bot_b)
+
+    # Table headers
+    cE4 = ws.cell(4, 5, 'Year')
+    cE4.font = font_bold
+    cE4.alignment = align_left
+    cE4.border = Border(left=medium_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+    cF4 = ws.cell(4, 6, 'MT')
+    cF4.font = font_bold
+    cF4.alignment = align_left
+    cF4.border = table_border
+
+    for idx, (yr, val) in enumerate(data, 5):
+        is_covid = 'COVID19' in yr
+        f_font = font_bold if is_covid else font_normal
+
+        cE = ws.cell(idx, 5, yr)
+        cE.font = f_font
+        cE.alignment = align_left
+        cE.border = Border(left=medium_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+        cF = ws.cell(idx, 6, val)
+        cF.font = f_font
+        cF.alignment = align_right
+        cF.border = table_border
+        if isinstance(val, int):
+            if idx >= 17:
+                cF.number_format = '#,##,##,##0'
+            else:
+                cF.number_format = '0'
+        else:
+            cF.number_format = '#,##,##,##0'
+
+    # Set column widths & row heights dynamically
+    ws.column_dimensions['E'].width = 28
+    ws.column_dimensions['F'].width = 16
+    ws.column_dimensions['G'].width = 4
+    for c in range(8, container_end_col + 3):
+        ws.column_dimensions[get_column_letter(c)].width = col_width_chars
+
+    ws.row_dimensions[3].height = 15
+    for r in range(4, container_end_row):
+        ws.row_dimensions[r].height = 18
+    ws.row_dimensions[container_end_row].height = 15
+
+    # Configure Axes matching reference styling
+    chart.y_axis.majorGridlines = ChartLines()
+    chart.y_axis.scaling.min = 0
+    chart.y_axis.scaling.max = 30000000
+    chart.y_axis.majorUnit = 5000000
+    chart.y_axis.axPos = 'l'
+    chart.y_axis.tickLblPos = 'nextTo'
+
+    chart.x_axis.axPos = 'b'
+    chart.x_axis.tickLblPos = 'low'
+    chart.x_axis.txPr = RichText(bodyPr=RichTextProperties(rot=-2700000))
+
+    data_ref = Reference(ws, min_col=6, min_row=4, max_row=max_chart_row)
+    cats_ref = Reference(ws, min_col=5, min_row=5, max_row=max_chart_row)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cats_ref)
+
+    # Clean data labels: only show values at the top of the bars
+    chart.dataLabels = DataLabelList()
+    chart.dataLabels.showVal = True
+    chart.dataLabels.showCatName = False
+    chart.dataLabels.showSerName = False
+    chart.dataLabels.showLegendKey = False
+    chart.dataLabels.showPercent = False
+    chart.dataLabels.position = 'outEnd'
+
+    # Dotted linear trendline (no equation or R-squared text)
+    tl = Trendline()
+    tl.trendlineType = 'linear'
+    tl.dispEq = False
+    tl.dispRSqr = False
+    gp = GraphicalProperties()
+    gp.line = LineProperties(prstDash='dot')
+    tl.spPr = gp
+
+    s = chart.series[0]
+    s.graphicalProperties.solidFill = '5B9BD5'
+    s.trendline = tl
+
+    ws.add_chart(chart, 'H4')
 
     return ws
