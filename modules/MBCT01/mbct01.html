@@ -888,7 +888,24 @@ async function loadAvailableDocs() {
                     return `<span class="approval-badge" style="background:${bg};color:${color};" ${click} title="Click for history">${val}</span>`;
                 }
             },
-            {title: "Created By", field: "created_by", width: 90},
+            {
+                title: "Created By", 
+                field: "created_by", 
+                width: 100,
+                formatter: function(cell) {
+                    let val = cell.getValue();
+                    if (!val) return '';
+                    if (typeof val === 'string' && val.trim().startsWith('{')) {
+                        try {
+                            val = JSON.parse(val);
+                        } catch(e) {}
+                    }
+                    if (typeof val === 'object' && val !== null) {
+                        return val.username || val.user_id || val.id || '';
+                    }
+                    return val;
+                }
+            },
             {
                 title: "Proof of Qty", field: "_proof_doc_id", width: 150, headerSort: false, visible: false,
                 formatter: function(cell) {
@@ -2340,7 +2357,7 @@ if (type === 'cleaning') {
 
     function addRow() {
         table.addRow({
-            created_by: '',
+            created_by: currentUser,
             created_date: '',
             doc_date: '',
             doc_status: '',
