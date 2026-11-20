@@ -7,12 +7,21 @@ MODULE_CODE = 'SRV01'
 MODULE_INFO = {'code': 'SRV01', 'name': 'Service Recording'}
 
 
+def _get_perms():
+    if session.get('is_admin'):
+        return {'can_read': 1, 'can_add': 1, 'can_edit': 1, 'can_delete': 1}
+    return get_user_permissions(session.get('user_id'), 'SRV01')
+
+
 @bp.route('/module/SRV01/')
 def index():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    perms = get_user_permissions(session['user_id'], 'SRV01')
+    perms = _get_perms()
+    if not perms or not perms.get('can_read'):
+        return render_template('no_access.html'), 403
+
     page = int(request.args.get('page', 1))
     source_type = request.args.get('source_type')
     service_type_id = request.args.get('service_type_id', type=int)
@@ -43,6 +52,10 @@ def get_data():
     """Get paginated service records (AJAX)"""
     if 'user_id' not in session:
         return jsonify({'error': 'Not logged in'}), 401
+
+    perms = _get_perms()
+    if not perms or not perms.get('can_read'):
+        return jsonify({'error': 'No read permission'}), 403
 
     page = request.args.get('page', 1, type=int)
     source_type = request.args.get('source_type')
@@ -83,6 +96,10 @@ def get_record(record_id):
     if 'user_id' not in session:
         return jsonify({'error': 'Not logged in'}), 401
 
+    perms = _get_perms()
+    if not perms or not perms.get('can_read'):
+        return jsonify({'error': 'No read permission'}), 403
+
     header, values = model.get_service_record_by_id(record_id)
     if not header:
         return jsonify({'error': 'Record not found'}), 404
@@ -94,17 +111,17 @@ def get_record(record_id):
 def save():
     """Save service record + field values"""
     if 'user_id' not in session:
-        return jsonify({'success': False, 'error': 'Not logged in'})
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
 
-    perms = get_user_permissions(session['user_id'], 'SRV01')
-    data = request.json
+    perms = _get_perms()
+    data = request.json or {}
 
-    if data.get('id') and not perms['can_edit']:
-        return jsonify({'success': False, 'error': 'No edit permission'})
+    if data.get('id') and not perms.get('can_edit'):
+        return jsonify({'success': False, 'error': 'No edit permission'}), 403
     if data.get('id') and model.is_billed(data['id']):
-        return jsonify({'success': False, 'error': 'Record is billed - cannot edit'})
-    if not data.get('id') and not perms['can_add']:
-        return jsonify({'success': False, 'error': 'No add permission'})
+        return jsonify({'success': False, 'error': 'Record is billed - cannot edit'}), 400
+    if not data.get('id') and not perms.get('can_add'):
+        return jsonify({'success': False, 'error': 'No add permission'}), 403
 
     # Build header data
     header_data = {
@@ -150,15 +167,15 @@ def save():
 def delete():
     """Delete a service record"""
     if 'user_id' not in session:
-        return jsonify({'success': False, 'error': 'Not logged in'})
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
 
-    perms = get_user_permissions(session['user_id'], 'SRV01')
-    if not perms['can_delete']:
-        return jsonify({'success': False, 'error': 'No delete permission'})
+    perms = _get_perms()
+    if not perms.get('can_delete'):
+        return jsonify({'success': False, 'error': 'No delete permission'}), 403
 
-    record_id = request.json.get('id')
+    record_id = (request.json or {}).get('id')
     if model.is_billed(record_id):
-        return jsonify({'success': False, 'error': 'Record is billed - cannot delete'})
+        return jsonify({'success': False, 'error': 'Record is billed - cannot delete'}), 400
     model.delete_service_record(record_id)
     return jsonify({'success': True})
 
