@@ -9706,8 +9706,14 @@ def daily_progress_report_excel():
         # SHEET 6: CARGO QUANTITY STATEMENT
         # =====================================================
 
-        from .cargo_statement import build_cargo_quantity_statement_sheet
+        from .cargo_statement import build_cargo_quantity_statement_sheet, build_cargo_quantity_graph_sheet
         build_cargo_quantity_statement_sheet(wb, cur)
+
+        # =====================================================
+        # SHEET 7: CARGO QUANTITY GRAPH
+        # =====================================================
+
+        build_cargo_quantity_graph_sheet(wb)
 
         # =====================================================
         # GENERATE FILE
