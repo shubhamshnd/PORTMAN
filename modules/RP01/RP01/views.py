@@ -28,6 +28,8 @@ from .port_overview import views as _port_overview_views  # noqa: registers port
 from .ai_chat import views as _ai_chat_views  # noqa: registers ai-chat routes on bp
 from .shift_cargo_balance import views as _shift_cargo_balance_views  # noqa: registers shift-cargo-balance routes on bp
 
+from database import get_user_permissions
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -36,8 +38,15 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def _get_perms():
+    if session.get('is_admin'):
+        return {'can_read': 1, 'can_add': 1, 'can_edit': 1, 'can_delete': 1}
+    return get_user_permissions(session.get('user_id'), 'RP01')
 
 @bp.route('/module/RP01/')
 @login_required
 def index():
-    return render_template('rp01.html', username=session.get('username'))
+    perms = _get_perms()
+    if not perms or not perms.get('can_read'):
+        return render_template('no_access.html'), 403
+    return render_template('rp01.html', username=session.get('username'), permissions=perms)

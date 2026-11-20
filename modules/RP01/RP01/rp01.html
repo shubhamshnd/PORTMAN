@@ -110,6 +110,13 @@
     style="display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:12px;border-bottom:2px solid var(--border-color);">
     <h2 style="margin:0;font-size:20px;color:var(--text-primary);">Reports</h2>
     <span class="module-badge">RP01</span>
+    {% if permissions %}
+        {% if session.get('is_admin') %}
+            <span style="font-size:11px;font-weight:600;color:#2b6cb0;background:#ebf8ff;padding:2px 8px;border-radius:4px;border:1px solid #bee3f8;">Admin</span>
+        {% elif permissions.can_read and not permissions.can_add and not permissions.can_edit and not permissions.can_delete %}
+            <span style="font-size:11px;font-weight:600;color:#4a5568;background:#edf2f7;padding:2px 8px;border-radius:4px;border:1px solid #e2e8f0;">View Only</span>
+        {% endif %}
+    {% endif %}
 </div>
 
 <p style="color:var(--text-secondary);font-size:12px;margin-bottom:24px;">
@@ -189,13 +196,13 @@
         <div class="card-arrow">Open Live &rarr;</div>
     </a>
 
-    {% if session.get('is_admin') %}
-    <!-- Historical Data (admin only) -->
+    {% if session.get('is_admin') or (permissions and permissions.can_add) %}
+    <!-- Historical Data -->
     <a class="report-card" href="/module/RP01/historical-data/">
         <div class="card-icon">
             <span style="font-size:28px;">🗄️</span>
         </div>
-        <div class="card-title">Historical Data (Admin)</div>
+        <div class="card-title">Historical Data</div>
         <div class="card-desc">
             Upload backdated LUEU data (CSV/Excel) for use in reports &amp; dashboards. Replaces the historical dataset;
             live data is untouched.
@@ -475,4 +482,13 @@
     </a>
 
 </div>
+
+<script>
+    const permissions = {
+        can_read: {{ permissions.can_read|default(0) }},
+        can_add: {{ permissions.can_add|default(0) }},
+        can_edit: {{ permissions.can_edit|default(0) }},
+        can_delete: {{ permissions.can_delete|default(0) }}
+    };
+</script>
 {% endblock %}
