@@ -56,9 +56,10 @@
 
 {% macro chip(t, board, can_edit) %}
 <div class="chip {{ t.kind|lower }}{{ ' pinned' if t.pinned }}">
-    <div class="chip-head" title="{{ t.name }} {{ t.trip_label }} | last stamped: {{ t.last_stage or 'nothing' }}{% if t.last_at %} at {{ t.last_at.strftime('%d-%m %H:%M') }}{% endif %}{% if t.leg_p50 %} | typically {{ t.leg_p50 }} h from there (n={{ t.leg_n }}){% endif %}{% if t.eta_p10 %} | window {{ t.eta_p10.strftime('%d-%m %H:%M') }} to {{ t.eta_p90.strftime('%d-%m %H:%M') }}{% endif %}">
+    <div class="chip-head" title="{{ t.name }} {{ t.trip_label }} | last stamped: {{ t.last_stage or 'nothing' }}{% if t.last_at %} at {{ t.last_at.strftime('%d-%m %H:%M') }}{% endif %}{% if t.eta_source == 'model' %} | tide + queue model{% elif t.leg_p50 %} | typically {{ t.leg_p50 }} h from there (n={{ t.leg_n }}){% endif %}{% if t.eta_p10 %} | window {{ t.eta_p10.strftime('%d-%m %H:%M') }} to {{ t.eta_p90.strftime('%d-%m %H:%M') }}{% endif %}">
         <span class="chip-eta">{{ t.eta.strftime('%H:%M') }}</span>
         {% if t.pinned %}<span class="pin" title="Pinned by a planner">PIN</span>{% endif %}
+        {% if t.missed_tide %}<span class="missed" title="Predicted time has passed with no arrival stamped. Moved to the next tide.">NEXT TIDE</span>{% endif %}
         <span class="chip-name">{{ t.name }}</span>
         {% if t.qty %}<span class="chip-qty">{{ '{:,.0f}'.format(t.qty) }} {{ t.uom }}</span>{% endif %}
         {% if t.cargo %}<span class="chip-cargo">{{ t.cargo }}</span>{% endif %}
@@ -136,6 +137,8 @@
     .chip-cargo, .chip-via { color:var(--text-secondary); }
     .pin { font-size:9px; font-weight:700; letter-spacing:.5px; color:#fff;
            background:#4a90d9; border-radius:3px; padding:0 4px; }
+    .missed { font-size:9px; font-weight:700; letter-spacing:.5px; color:#e53e3e;
+              border:1px solid #e53e3e; border-radius:3px; padding:0 4px; }
     .drift { font-size:10px; color:var(--text-secondary); margin-top:2px; }
 
     /* planner assignments */
@@ -206,6 +209,7 @@
     <span class="pill">Ops day from <b>{{ board.ops_start.strftime('%d-%m-%Y %H:%M') }}</b></span>
     <span class="pill"><b>{{ board.inbound_count }}</b> arriving in the next 48 h</span>
     {% if board.overdue %}<span class="pill warn"><b>{{ board.overdue|length }}</b> overdue</span>{% endif %}
+    {% if board.missed %}<span class="pill warn"><b>{{ board.missed }}</b> missed a tide</span>{% endif %}
     <span class="pill"><b>{{ board.at_port|length }}</b> at port now</span>
     {% if board.clashes %}<span class="pill warn"><b>{{ board.clashes }}</b> berth clash{{ '' if board.clashes == 1 else 'es' }}</span>{% endif %}
     <span class="pill">as of {{ board.now.strftime('%d-%m-%Y %H:%M') }} IST</span>
@@ -286,11 +290,26 @@
 
 <details class="basis">
     <summary>How these ETAs are worked out</summary>
-    <p>No ETA is stored anywhere in the system, so each trip is placed at its latest
-       stamped milestone plus the median time this port has actually taken from that
-       milestone to arrival. Hover any chip for its p10–p90 window. Medians are
-       recomputed from completed trips on every page load; a stage needs at least
-       30 past voyages before it is used.</p>
+    <p>No ETA is stored anywhere in the system, so it is predicted from each trip's latest
+       stamped milestone, the tide (from Tide Master) and the other trips already waiting.
+       If the predicted time passes with no arrival stamped, the trip moves to the next
+       tide. Hover any chip for its p10–p90 window. Trips the model cannot place use the
+       median times below, recomputed from completed trips on every page load; a stage
+       needs at least 30 past voyages before it is used.</p>
+    {% if board.learning %}
+    {% if board.learning.accuracy %}
+    <p>Track record, last 30 days:
+        {% for kind, a in board.learning.accuracy.items() %}
+        <span class="tag {{ kind|lower }}">{{ kind }}</span> typical error {{ a.typical_h }} h
+        over {{ a.n }} predictions{% if a.median_rule_h is not none %} (medians alone: {{ a.median_rule_h }} h){% endif %},
+        {{ a.within_2h_pct }}% within 2 h{{ '. ' if loop.last else '; ' }}
+        {% endfor %}</p>
+    {% endif %}
+    {% if board.learning.last_run %}
+    <p>Last retrained {{ board.learning.last_run.ran_at.strftime('%d-%m-%Y %H:%M') }}:
+       {{ 'new model in use.' if board.learning.last_run.promoted else 'kept the previous model. ' ~ board.learning.last_run.reason ~ '.' }}</p>
+    {% endif %}
+    {% endif %}
     <table>
         <tr><th>Leg</th><th>Median hours to arrival</th><th>Voyages measured</th></tr>
         {% for r in board.basis %}

@@ -6,17 +6,22 @@ derived: take the latest milestone a trip has stamped and add the median
 observed time from that milestone to arrival, measured over this port's own
 completed trips.
 
-A median is the whole model on purpose — a gradient-boosted regressor was tried
-seven ways on this data and lost to it every time. The residual is driven by
-tide windows, berth-priority calls and breakdowns that no column here records,
-so the calibrated table is both more accurate and auditable. p10/p90 ride along
-so the board can show a band rather than a false point estimate.
+Two sources, in this order:
+  1. The v6 model (eta_predict.py): one regressor per milestone fed the tide
+     (fitted from TM01 tide_master) and the queue of other open trips. Replayed
+     over 19 Sep - 22 Nov 2026 it beat the median on every barge milestone.
+  2. The median table below, whenever the model has no answer or cannot load.
+p10/p90 ride along so the board can show a band rather than a false point
+estimate. eta_service.py logs every ETA and retrains weekly; see eta_learn.py.
 """
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 from statistics import median, quantiles
 
 from database import get_db, get_cursor
+
+log = logging.getLogger(__name__)
 
 # Milestone chains, earliest first. A trip is placed at the LAST one it stamped.
 BARGE_STAGES = [
@@ -158,7 +163,7 @@ def _fetch():
     cur = get_cursor(conn)
     cur.execute('''
         SELECT b.id, b.barge_name, b.trip_number, b.cargo_name, b.discharge_quantity,
-               b.contractor_name, h.doc_num AS doc_num, h.vessel_name,
+               b.contractor_name, h.doc_num AS doc_num, h.vessel_name, h.operation_type,
                b.trip_start, b.along_side_vessel, b.commenced_loading,
                b.completed_loading, b.cast_off_mv, b.anchored_gull_island,
                b.aweigh_gull_island, b.amf_at_port,
@@ -214,7 +219,28 @@ def _leg_table(rows, stages, arrival_col):
     return table
 
 
-def _open_trips(rows, stages, table, arrival_col, done_col, spec, now, plans):
+def _model_etas(barges, mbcs, now):
+    """{(kind, trip_id): v6 prediction}, or {} — the board must still open on
+    plain medians if scikit-learn or the model file is missing on this server."""
+    try:
+        from .eta_predict import predict_board
+        return predict_board(barges, mbcs, now=now)
+    except Exception:
+        log.exception('RP03: v6 ETA model unavailable, using median legs')
+        return {}
+
+
+def _learning(barges, mbcs, now):
+    """Track record of the logged ETAs, or None before eta_service has run."""
+    try:
+        from .eta_learn import status
+        return status(barges, mbcs, now)
+    except Exception:
+        log.exception('RP03: ETA track record unavailable')
+        return None
+
+
+def _open_trips(rows, stages, table, arrival_col, done_col, spec, now, plans, etas):
     """Live trips, each tagged 'inbound' / 'arrived' / 'unknown'.
 
     One flat list rather than three, so the caller can pick the latest trip per
@@ -270,6 +296,13 @@ def _open_trips(rows, stages, table, arrival_col, done_col, spec, now, plans):
                 'leg_p50': p50,
                 'leg_n':   n,
             })
+        pred = etas.get((spec['kind'], r['id']))
+        if pred:
+            # A median-only stage returns no band of its own; keep the table's.
+            trip.update({'eta': pred['eta'], 'eta_source': 'model',
+                         'missed_tide': pred['missed_tide']})
+            if pred['eta_p10'] and pred['eta_p90']:
+                trip.update({'eta_p10': pred['eta_p10'], 'eta_p90': pred['eta_p90']})
         pinned = _dt(plan.get('planned_at'))
         if pinned:
             # The planner's slot wins; the derived ETA stays visible beside it so
@@ -351,6 +384,7 @@ def board(now=None):
     barges, mbcs = _fetch()
     plans = _plans()
 
+    etas = _model_etas(barges, mbcs, now)
     barge_table = _leg_table(barges, BARGE_STAGES, BARGE_ARRIVAL)
     mbc_table   = _leg_table(mbcs,   MBC_STAGES,   MBC_ARRIVAL)
 
@@ -359,16 +393,17 @@ def board(now=None):
                     {'kind': 'BARGE', 'name': 'barge_name', 'qty': 'discharge_quantity',
                      'via': 'vessel_name',
                      'trip_label': lambda r: 'Trip %s' % r['trip_number'] if r.get('trip_number') else ''},
-                    now, plans)
+                    now, plans, etas)
         + _open_trips(mbcs, MBC_STAGES, mbc_table, MBC_ARRIVAL, MBC_DONE,
                       {'kind': 'MBC', 'name': 'mbc_name', 'qty': 'bl_quantity',
                        'via': 'load_port', 'trip_label': lambda r: r.get('doc_num') or ''},
-                      now, plans))
+                      now, plans, etas))
     inbound = [t for t in trips if t['bucket'] == 'inbound']
     at_port = [t for t in trips if t['bucket'] == 'arrived']
     unknown = [t for t in trips if t['bucket'] == 'unknown']
     _flag_berth_clashes(inbound + at_port)
     clashes = sum(1 for t in inbound + at_port if t.get('berth_clash'))
+    missed = sum(1 for t in inbound if t.get('missed_tide'))
 
     # Operational day: before 07:00 we are still inside yesterday's ops day.
     ops_start = now.replace(hour=OPS_HOUR, minute=0, second=0, microsecond=0)
@@ -407,7 +442,8 @@ def board(now=None):
         'unknown': sorted(unknown, key=lambda x: x['sort_at'], reverse=True),
         'inbound_count': sum(len(c) for row in slots for c in row),
         'basis': basis, 'berths': berths, 'routes': routes, 'clashes': clashes,
-        'slot_secs': slot_secs,
+        'missed': missed, 'modelled': sum(1 for t in inbound if t.get('eta_source') == 'model'),
+        'slot_secs': slot_secs, 'learning': _learning(barges, mbcs, now),
     }
 
 
@@ -473,7 +509,10 @@ def _demo(now=None):
                     (t['derived_eta'] - t['eta']).total_seconds() / 60), 'drift mismatch'
         else:
             assert t['eta_p10'] <= t['eta'] <= t['eta_p90'], 'band inverted for %s' % t['name']
-            assert t['eta'] >= t['last_at'], 'ETA before its own milestone'
+            if t.get('eta_source') == 'model':
+                assert t['eta'] >= b['now'].replace(second=0, microsecond=0), 'model ETA in the past'
+            # a stamp mistyped into the future is not a milestone to the model
+            assert t['eta'] >= min(t['last_at'], b['now'].replace(second=0, microsecond=0)), 'ETA before its own milestone'
     for cell in (c for row in b['slots'] for c in row):
         ranks = [_slot_order(t) for t in cell]
         assert ranks == sorted(ranks), 'priority order broken inside a slot'
@@ -486,6 +525,7 @@ def _demo(now=None):
         assert row['n'] >= MIN_N and 0 <= row['p50'] <= MAX_H
     planned = [t for t in placed + b['overdue'] + b['at_port'] + b['unknown']
                if t.get('berth_id') or t.get('route_id') or t.get('priority')]
+    print('%d of the inbound trips use the v6 model, %d missed a tide' % (b['modelled'], b['missed']))
     print('RP03 selfcheck OK @ %s — %d inbound in %d h, %d overdue, %d at port, %d no-ETA, '
           'basis %d stages, %d rows (%d merged), %d planned, %d berths, %d routes'
           % (b['now'].strftime('%Y-%m-%d %H:%M'), b['inbound_count'],

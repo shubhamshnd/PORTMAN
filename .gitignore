@@ -4,3 +4,5 @@ __pycache__/
 logs/
 config.py
 db_backups/
+modules/RP03/eta_live.*
+modules/RP03/eta_prev.joblib
