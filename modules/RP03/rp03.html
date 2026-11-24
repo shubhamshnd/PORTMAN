@@ -55,9 +55,10 @@
 {% endmacro %}
 
 {% macro chip(t, board, can_edit) %}
-<div class="chip {{ t.kind|lower }}{{ ' pinned' if t.pinned }}">
+<div class="chip {{ t.kind|lower }}{{ ' pinned' if t.pinned }}{{ ' arrived' if t.arrived_at }}">
     <div class="chip-head" title="{{ t.name }} {{ t.trip_label }} | last stamped: {{ t.last_stage or 'nothing' }}{% if t.last_at %} at {{ t.last_at.strftime('%d-%m %H:%M') }}{% endif %}{% if t.eta_source == 'model' %} | tide + queue model{% elif t.leg_p50 %} | typically {{ t.leg_p50 }} h from there (n={{ t.leg_n }}){% endif %}{% if t.eta_p10 %} | window {{ t.eta_p10.strftime('%d-%m %H:%M') }} to {{ t.eta_p90.strftime('%d-%m %H:%M') }}{% endif %}">
-        <span class="chip-eta">{{ t.eta.strftime('%H:%M') }}</span>
+        <span class="chip-eta">{{ (t.arrived_at or t.eta).strftime('%H:%M') }}</span>
+        {% if t.arrived_at %}<span class="arr" title="Arrived, discharge not complete">ARRIVED</span>{% endif %}
         {% if t.pinned %}<span class="pin" title="Pinned by a planner">PIN</span>{% endif %}
         {% if t.missed_tide %}<span class="missed" title="Predicted time has passed with no arrival stamped. Moved to the next tide.">NEXT TIDE</span>{% endif %}
         <span class="chip-name">{{ t.name }}</span>
@@ -139,6 +140,9 @@
            background:#4a90d9; border-radius:3px; padding:0 4px; }
     .missed { font-size:9px; font-weight:700; letter-spacing:.5px; color:#e53e3e;
               border:1px solid #e53e3e; border-radius:3px; padding:0 4px; }
+    .chip.arrived { background:rgba(74,144,217,.14); }
+    .arr { font-size:9px; font-weight:700; letter-spacing:.5px; color:#fff;
+           background:#2b6cb0; border-radius:3px; padding:0 4px; }
     .drift { font-size:10px; color:var(--text-secondary); margin-top:2px; }
 
     /* planner assignments */
@@ -178,7 +182,6 @@
     .tag.barge { background:#38a169; }
     .tag.mbc   { background:#dd6b20; }
     .muted { color:var(--text-secondary); }
-    .empty { font-size:12px; color:var(--text-secondary); padding:6px 8px; }
 
     details.basis { margin-top:24px; font-size:12px; color:var(--text-secondary); }
     details.basis summary { cursor:pointer; color:#4a90d9; }
@@ -210,7 +213,7 @@
     <span class="pill"><b>{{ board.inbound_count }}</b> arriving in the next 48 h</span>
     {% if board.overdue %}<span class="pill warn"><b>{{ board.overdue|length }}</b> overdue</span>{% endif %}
     {% if board.missed %}<span class="pill warn"><b>{{ board.missed }}</b> missed a tide</span>{% endif %}
-    <span class="pill"><b>{{ board.at_port|length }}</b> at port now</span>
+    {% if board.arrived %}<span class="pill"><b>{{ board.arrived|length }}</b> arrived today</span>{% endif %}
     {% if board.clashes %}<span class="pill warn"><b>{{ board.clashes }}</b> berth clash{{ '' if board.clashes == 1 else 'es' }}</span>{% endif %}
     <span class="pill">as of {{ board.now.strftime('%d-%m-%Y %H:%M') }} IST</span>
     <a class="btn-refresh" href="{{ url_for('RP03.index') }}">Refresh</a>
@@ -258,16 +261,6 @@
     {% endfor %}
 </div>
 {% endif %}
-
-<div class="section">
-    <h3>At port now — arrived, discharge not complete ({{ board.at_port|length }})</h3>
-    <p class="hint">These are holding berths, so they matter when you plan the incoming ones.</p>
-    {% for t in board.at_port %}
-        {{ plain_row(t, 'arrived ' ~ t.arrived_at.strftime('%d-%m %H:%M'), '', board, can_edit) }}
-    {% else %}
-        <div class="empty">Nothing at port.</div>
-    {% endfor %}
-</div>
 
 {% if board.beyond %}
 <div class="section">

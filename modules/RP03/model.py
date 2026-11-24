@@ -402,7 +402,6 @@ def board(now=None):
     at_port = [t for t in trips if t['bucket'] == 'arrived']
     unknown = [t for t in trips if t['bucket'] == 'unknown']
     _flag_berth_clashes(inbound + at_port)
-    clashes = sum(1 for t in inbound + at_port if t.get('berth_clash'))
     missed = sum(1 for t in inbound if t.get('missed_tide'))
 
     # Operational day: before 07:00 we are still inside yesterday's ops day.
@@ -412,6 +411,14 @@ def board(now=None):
     slot_secs = SLOT_MIN * 60
 
     slots = [[[] for _ in range(HORIZON_DAYS)] for _ in range(SLOTS_PER_DAY)]
+    # Arrived trips show at the hour they arrived, today only. Older ones are not
+    # listed, but still count for clashes because they are holding the berth.
+    arrived = [t for t in sorted(at_port, key=lambda x: x['arrived_at'])
+               if ops_start <= t['arrived_at'] < ops_start + timedelta(days=1)]
+    for t in arrived:
+        slots[int((t['arrived_at'] - ops_start).total_seconds() // slot_secs)][0].append(t)
+    clashes = sum(1 for t in inbound + arrived if t.get('berth_clash'))
+
     overdue, beyond = [], []
     for t in sorted(inbound, key=_slot_order):
         idx = int((t['eta'] - ops_start).total_seconds() // slot_secs)
@@ -438,9 +445,9 @@ def board(now=None):
         'now': now, 'ops_start': ops_start, 'days': days,
         'rows': _merge_rows(slots, ops_start, live_idx),
         'slots': slots, 'overdue': overdue, 'beyond': beyond,
-        'at_port': sorted(at_port, key=lambda x: x['arrived_at']),
+        'arrived': arrived,
         'unknown': sorted(unknown, key=lambda x: x['sort_at'], reverse=True),
-        'inbound_count': sum(len(c) for row in slots for c in row),
+        'inbound_count': sum(len(c) for row in slots for c in row) - len(arrived),
         'basis': basis, 'berths': berths, 'routes': routes, 'clashes': clashes,
         'missed': missed, 'modelled': sum(1 for t in inbound if t.get('eta_source') == 'model'),
         'slot_secs': slot_secs, 'learning': _learning(barges, mbcs, now),
@@ -499,7 +506,12 @@ def _demo(now=None):
     assert b['ops_start'] <= b['now'] < b['ops_start'] + timedelta(days=1)
     assert sum(r['span'] for r in b['rows']) == SLOTS_PER_DAY
     assert not any(r['empty'] and r['cells'] for r in b['rows'])
-    placed = [t for row in b['slots'] for cell in row for t in cell]
+    on_board = [t for row in b['slots'] for cell in row for t in cell]
+    for t in b['arrived']:
+        i = int((t['arrived_at'] - b['ops_start']).total_seconds() // b['slot_secs'])
+        assert t in b['slots'][i][0], 'arrival not in its own slot today'
+    placed = [t for t in on_board if t['bucket'] == 'inbound']
+    assert len(on_board) == len(placed) + len(b['arrived'])
     assert len(placed) == b['inbound_count']
     for t in placed:
         assert b['ops_start'] <= t['eta'] < b['ops_start'] + timedelta(days=HORIZON_DAYS)
@@ -514,22 +526,22 @@ def _demo(now=None):
             # a stamp mistyped into the future is not a milestone to the model
             assert t['eta'] >= min(t['last_at'], b['now'].replace(second=0, microsecond=0)), 'ETA before its own milestone'
     for cell in (c for row in b['slots'] for c in row):
-        ranks = [_slot_order(t) for t in cell]
+        ranks = [_slot_order(t) for t in cell if t['bucket'] == 'inbound']
         assert ranks == sorted(ranks), 'priority order broken inside a slot'
     for t in b['overdue']:
         assert t['eta'] < b['ops_start']
     names = [(t['kind'], t['name'].upper())
-             for t in placed + b['overdue'] + b['beyond'] + b['at_port'] + b['unknown']]
+             for t in placed + b['overdue'] + b['beyond'] + b['arrived'] + b['unknown']]
     assert len(names) == len(set(names)), 'a vessel appears on the board twice'
     for row in b['basis']:
         assert row['n'] >= MIN_N and 0 <= row['p50'] <= MAX_H
-    planned = [t for t in placed + b['overdue'] + b['at_port'] + b['unknown']
+    planned = [t for t in placed + b['overdue'] + b['arrived'] + b['unknown']
                if t.get('berth_id') or t.get('route_id') or t.get('priority')]
     print('%d of the inbound trips use the v6 model, %d missed a tide' % (b['modelled'], b['missed']))
-    print('RP03 selfcheck OK @ %s — %d inbound in %d h, %d overdue, %d at port, %d no-ETA, '
+    print('RP03 selfcheck OK @ %s — %d inbound in %d h, %d overdue, %d arrived today, %d no-ETA, '
           'basis %d stages, %d rows (%d merged), %d planned, %d berths, %d routes'
           % (b['now'].strftime('%Y-%m-%d %H:%M'), b['inbound_count'],
-             24 * HORIZON_DAYS, len(b['overdue']), len(b['at_port']),
+             24 * HORIZON_DAYS, len(b['overdue']), len(b['arrived']),
              len(b['unknown']), len(b['basis']), len(b['rows']),
              sum(1 for r in b['rows'] if r['empty']), len(planned),
              len(b['berths']), len(b['routes'])))
