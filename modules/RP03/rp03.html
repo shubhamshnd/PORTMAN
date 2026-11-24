@@ -183,12 +183,6 @@
     .tag.mbc   { background:#dd6b20; }
     .muted { color:var(--text-secondary); }
 
-    details.basis { margin-top:24px; font-size:12px; color:var(--text-secondary); }
-    details.basis summary { cursor:pointer; color:#4a90d9; }
-    details.basis table { border-collapse:collapse; margin-top:8px; }
-    details.basis td, details.basis th { border:1px solid var(--border-color);
-                                         padding:3px 10px; text-align:left; }
-
     @media (max-width:700px) {
         .cal, .cal tbody, .cal tr, .cal td { display:block; width:auto; }
         .cal thead { display:none; }
@@ -280,38 +274,4 @@
     {% endfor %}
 </div>
 {% endif %}
-
-<details class="basis">
-    <summary>How these ETAs are worked out</summary>
-    <p>No ETA is stored anywhere in the system, so it is predicted from each trip's latest
-       stamped milestone, the tide (from Tide Master) and the other trips already waiting.
-       If the predicted time passes with no arrival stamped, the trip moves to the next
-       tide. Hover any chip for its p10–p90 window. Trips the model cannot place use the
-       median times below, recomputed from completed trips on every page load; a stage
-       needs at least 30 past voyages before it is used.</p>
-    {% if board.learning %}
-    {% if board.learning.accuracy %}
-    <p>Track record, last 30 days:
-        {% for kind, a in board.learning.accuracy.items() %}
-        <span class="tag {{ kind|lower }}">{{ kind }}</span> typical error {{ a.typical_h }} h
-        over {{ a.n }} predictions{% if a.median_rule_h is not none %} (medians alone: {{ a.median_rule_h }} h){% endif %},
-        {{ a.within_2h_pct }}% within 2 h{{ '. ' if loop.last else '; ' }}
-        {% endfor %}</p>
-    {% endif %}
-    {% if board.learning.last_run %}
-    <p>Last retrained {{ board.learning.last_run.ran_at.strftime('%d-%m-%Y %H:%M') }}:
-       {{ 'new model in use.' if board.learning.last_run.promoted else 'kept the previous model. ' ~ board.learning.last_run.reason ~ '.' }}</p>
-    {% endif %}
-    {% endif %}
-    <table>
-        <tr><th>Leg</th><th>Median hours to arrival</th><th>Voyages measured</th></tr>
-        {% for r in board.basis %}
-        <tr>
-            <td><span class="tag {{ r.kind|lower }}">{{ r.kind }}</span> {{ r.stage }}</td>
-            <td>{{ r.p50 }}</td>
-            <td>{{ r.n }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-</details>
 {% endblock %}
